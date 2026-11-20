@@ -141,6 +141,7 @@ class AudioEngine:
         self._was_playing = False
         self._mic_test: dict | None = None
         self.on_utterance = None                             # fn(np.ndarray int16) — finished user speech
+        self.gate = None                                     # VoiceGate: when set, it decides what is sent
         self._utt: list[np.ndarray] = []
         self._utt_prev_speech = False
         self._spec_buf: list[np.ndarray] = []
@@ -593,6 +594,16 @@ class AudioEngine:
         self._was_playing = playing
 
         self._levels = {**self._levels, "mic_db": mic_db, "speech": speech, "sending": sending}
+        gate = self.gate
+        if gate is not None:
+            # Personal voice gate: it holds, checks and forwards speech itself
+            # (audio/voice_gate.py). Nothing goes to Gemini any other way.
+            self._send_buf.clear()
+            try:
+                gate.feed(out, speech, sending)
+            except Exception as e:
+                print(f"[Audio] voice gate failed: {e}")
+            return
         self._collect_utterance(out, speech, sending)
         if not sending:
             self._send_buf.clear()

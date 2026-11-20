@@ -226,6 +226,8 @@ class VoiceStage(QWidget):
         self._speaking_caption = ""
         self._hearing_caption = ""      # live transcript of the user
         self._hearing_at = 0.0
+        self._gate_hint = ""            # e.g. "Ignored — not your voice"
+        self._gate_hint_at = 0.0
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(28, 20, 28, 18)
@@ -302,6 +304,13 @@ class VoiceStage(QWidget):
     def set_speaking_text(self, text: str) -> None:
         self._speaking_caption = text
         self._refresh()
+
+    def set_gate_hint(self, text: str) -> None:
+        """Brief, quiet note from the voice filter (shown for ~2.5 s while idle)."""
+        self._gate_hint = text
+        self._gate_hint_at = time.monotonic()
+        self._refresh()
+        QTimer.singleShot(2600, self._refresh)
 
     def set_hearing_text(self, text: str) -> None:
         """Live transcript of what the user is saying (shown until JARVIS answers)."""
@@ -390,6 +399,9 @@ class VoiceStage(QWidget):
             cap = self._activity
         if st == "speaking" and self._speaking_caption:
             cap = self._speaking_caption
+        if (self._gate_hint and st in ("listening", "ready")
+                and time.monotonic() - self._gate_hint_at < 2.5):
+            cap = self._gate_hint
         if (self._hearing_caption and st in ("listening", "ready", "processing")
                 and not (st == "processing" and self._activity)
                 and time.monotonic() - self._hearing_at < 6.0):

@@ -1,9 +1,15 @@
 """
 audio/speaker_id.py — local voice identity ("is this the enrolled user?").
 
-What it is: a speaker-embedding model (WeSpeaker ResNet34, run by sherpa-onnx)
-turns ≥1 s of speech into a 256-number voiceprint; we compare it with the
-enrolled profile by cosine similarity.
+What it is: a speaker-embedding model (CAM++ from 3D-Speaker, trained on
+VoxCeleb, run by sherpa-onnx) turns ~1 s of speech into a 512-number
+voiceprint; we compare it with the enrolled profile by cosine similarity.
+
+Model choice and threshold come from tools/speaker_bench.py (26 real speakers
+from Mini LibriSpeech through the app's own mic processing). CAM++ beat the
+ResNet34 model used before at every speech length (1 s: EER 5.1 % vs 20.6 %)
+and is 2.5× faster (46 ms per check). MODEL_THRESHOLD lets ~1 % of other
+people through on 1 s of speech.
 
 What it is NOT: security. Recordings and similar voices can fool it, so it is
 display-only — it never approves actions and never decides what JARVIS does.
@@ -32,19 +38,20 @@ from pathlib import Path
 import numpy as np
 
 ROOT = Path(__file__).resolve().parent.parent
-MODEL_NAME = "wespeaker_en_voxceleb_resnet34_LM.onnx"
+MODEL_NAME = "3dspeaker_speech_campplus_sv_en_voxceleb_16k.onnx"
 MODEL_URL = ("https://github.com/k2-fsa/sherpa-onnx/releases/download/"
              "speaker-recongition-models/" + MODEL_NAME)
-MODEL_SHA256 = "e9848563da86f263117134dfd7ad63c92355b37de492b55e325400c9d9c39012"
-MODEL_MB = 26.5
+MODEL_SHA256 = "98daf9bcf1c8abf3db374fec4c27a5eda7c58705bb3f180d057b085a72a88bb5"
+MODEL_MB = 28
 SAMPLE_RATE = 16000
 
 ENROL_SAMPLES = 5                 # phrases recorded during enrolment
-MIN_SPEECH_S = 1.0                # shorter utterances are "too short" (not guessed)
+MIN_SPEECH_S = 0.7                # shorter utterances are "too short" (not guessed)
 ENROL_MIN_SPEECH_S = 2.0
-THRESHOLD_FLOOR = 0.45            # never accept below this, whatever enrolment says
-THRESHOLD_CEIL = 0.90
-UNCERTAIN_BAND = 0.08             # just below the threshold = "uncertain"
+# Calibrated with tools/speaker_bench.py: other speakers score ~0.11 (median)
+# against a profile, the enrolled speaker ~0.66; 0.41 lets ~1 % of others through.
+MODEL_THRESHOLD = 0.41
+UNCERTAIN_BAND = 0.21             # 0.20–0.41 = "uncertain": listen longer and check again
 
 ENROL_PHRASES = [
     "The quick brown fox jumps over the lazy dog near the river bank.",
@@ -52,6 +59,17 @@ ENROL_PHRASES = [
     "My favourite season is autumn because the evenings are calm.",
     "Open the calendar and show me what is planned for next week.",
     "I usually drink a cup of tea before I start working.",
+]
+
+# Extra enrolment samples in other conditions, so you're still recognised when
+# you speak softly, from across the room, or with the TV on. Each can be skipped.
+ENROL_CONDITIONS = [
+    ("Say it more quietly, as if someone is sleeping nearby.",
+     "Turn off the lights in the living room and lock the front door."),
+    ("Step back about two metres from the microphone.",
+     "What's the weather going to be like tomorrow afternoon?"),
+    ("Turn on a fan, the TV or music at a low volume, then read this.",
+     "Set a timer for twenty minutes and play some relaxing music."),
 ]
 
 
@@ -89,6 +107,21 @@ def _speech_only(x: np.ndarray, frame: int = 320) -> np.ndarray:
     e = 10 * np.log10(np.mean(fr * fr, axis=1) + 1e-12)
     keep = e > max(e.max() - 35.0, -60.0)
     return fr[keep].reshape(-1)
+
+
+def profile_from_embeddings(E: np.ndarray) -> tuple[np.ndarray, float, list[float]]:
+    """Centroid, match threshold and leave-one-out scores for enrolment voiceprints."""
+    centroid = E.mean(0)
+    centroid = centroid / np.linalg.norm(centroid)
+    # leave-one-out: how well does each sample match the others?
+    loo = []
+    for i in range(len(E)):
+        c = np.delete(E, i, 0).mean(0)
+        loo.append(float(E[i] @ (c / np.linalg.norm(c))))
+    # The match threshold is calibrated against other people's voices (see
+    # MODEL_THRESHOLD). Deriving it from how alike your own samples are put it
+    # inside the range other speakers reach, so it isn't used any more.
+    return centroid, MODEL_THRESHOLD, loo
 
 
 class SpeakerIdentity:
@@ -131,7 +164,7 @@ class SpeakerIdentity:
         return "ready"
 
     def download_model(self, progress=None) -> None:
-        """Download the speaker model (≈26.5 MB) and verify its checksum. Blocking."""
+        """Download the speaker model (≈28 MB) and verify its checksum. Blocking."""
         self.model_path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.model_path.with_suffix(".part")
         h = hashlib.sha256()
@@ -213,17 +246,7 @@ class SpeakerIdentity:
         if len(embs) < 3:
             raise ValueError("At least 3 good samples are needed.")
         E = np.stack(embs)
-        centroid = E.mean(0)
-        centroid /= np.linalg.norm(centroid)
-        # leave-one-out: how well does each sample match the others?
-        loo = []
-        for i in range(len(E)):
-            c = np.delete(E, i, 0).mean(0)
-            loo.append(float(E[i] @ (c / np.linalg.norm(c))))
-        # Threshold sits just below your least-typical sample. The margin grows
-        # with how much your samples vary (consistent voice → tighter match).
-        margin = float(np.clip(3 * np.std(loo), 0.06, 0.15))
-        thr = float(np.clip(min(loo) - margin, THRESHOLD_FLOOR, THRESHOLD_CEIL))
+        centroid, thr, loo = profile_from_embeddings(E)
         self.profile = {"embeddings": E, "centroid": centroid, "threshold": thr,
                         "created": time.time() if not (append and self.profile) else self.profile["created"],
                         "updated": time.time(), "model": MODEL_NAME, "loo": np.array(loo)}
@@ -313,7 +336,7 @@ class SpeakerIdentity:
                 if str(d["model"]) != MODEL_NAME:
                     raise ValueError("profile was made with a different model")
                 self.profile = {k: d[k] for k in ("embeddings", "centroid", "loo")}
-                self.profile.update(threshold=float(d["threshold"]), created=float(d["created"]),
+                self.profile.update(threshold=MODEL_THRESHOLD, created=float(d["created"]),
                                     updated=float(d["updated"]), model=str(d["model"]))
         except Exception as e:
             print(f"[SpeakerID] Ignoring unreadable voice profile: {e}")

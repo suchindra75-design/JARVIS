@@ -314,6 +314,12 @@ class VoiceIdentityFlowTests(UITestBase):
             self.feed(pcm)
             self.assertTrue(wait_for(lambda: not self.eng.mic_test_running, 10))
             pump(200)
+        # the three "other conditions" samples are optional
+        from audio.speaker_id import ENROL_CONDITIONS
+        for _ in ENROL_CONDITIONS:
+            self.assertTrue(vp.rec_skip.isVisible())
+            vp.rec_skip.click()
+            pump(50)
         self.assertTrue(wait_for(lambda: self.sid.status == "ready", 30), vp.rec_msg.text())
         pump(100)
         self.assertEqual(vp.state_lbl.text(), "Profile ready")

@@ -3,6 +3,7 @@ config/api_keys.json
 config/certs/
 memory/long_term.json
 memory/voice_profile*.npz
+memory/voice_gate_log.csv
 _backup_before_fixes_*/
 
 # Local environment and caches
@@ -17,3 +18,4 @@ tools/bench_out/
 
 # Downloaded ML models (fetched and checksum-verified at runtime)
 models/
+config/.jarvis.lock

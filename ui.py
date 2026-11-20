@@ -1309,6 +1309,7 @@ class MainWindow(QMainWindow):
     _toast_sig      = pyqtSignal(str, str, str)       # title, body, tone
     _caption_sig    = pyqtSignal(str)                 # reply text while speaking
     _hearing_sig    = pyqtSignal(str)                 # live transcript of the user
+    _gate_sig       = pyqtSignal(str, str, object)    # voice filter: action, label, score
     _remote_sig     = pyqtSignal(bool, int)           # dashboard running, phones
 
     def __init__(self, face_path: str):
@@ -1442,6 +1443,7 @@ class MainWindow(QMainWindow):
         self._toast_sig.connect(lambda t, b, tone: self.toasts.show_toast(t, b, tone))
         self._caption_sig.connect(self.stage.set_speaking_text)
         self._hearing_sig.connect(self.stage.set_hearing_text)
+        self._gate_sig.connect(self._on_gate)
         self._cam_stop = threading.Event()
 
         # Camera preview overlay (child of central widget, positioned in resizeEvent)
@@ -2353,6 +2355,13 @@ class MainWindow(QMainWindow):
             r = self.convo.add_user(text, source)
             r._ts = time.time()
             self._pending_user_row = r
+            ps = getattr(self, "_pending_speaker", None)
+            if source == "voice" and ps and time.time() - ps[2] < 30 and self._show_speaker:
+                try:
+                    r.set_speaker(ps[0], ps[1])
+                except Exception:
+                    pass
+            self._pending_speaker = None
         elif role == "assistant":
             self.convo.add_assistant(text)
             self.stage.set_speaking_text("")
@@ -2378,8 +2387,31 @@ class MainWindow(QMainWindow):
     def _on_speaker(self, label_: str, score):
         self._last_verdict = (label_, score)
         self._refresh_voice_chip()
-        if self._show_speaker:
+        # With the voice filter on, the verdict arrives *before* the message it
+        # belongs to; _on_gate/_on_message attach it instead.
+        if self._show_speaker and not self._gate_on():
             self.convo.set_last_user_speaker(label_, score)
+
+    def _gate_on(self) -> bool:
+        try:
+            from memory.config_manager import get_voice_gate
+            sid = self.speaker_id
+            return get_voice_gate()["mode"] != "off" and sid is not None and sid.status == "ready"
+        except Exception:
+            return False
+
+    def _on_gate(self, action: str, label_: str, score):
+        """The voice filter decided about something it heard."""
+        if action == "ignored":
+            hint = {"unknown": "Ignored — that didn't sound like you.",
+                    "uncertain": "Not sure that was you — say it again?"}.get(label_)
+            if hint:
+                self.stage.set_gate_hint(hint)
+        elif action == "accepted":
+            self._pending_speaker = ("you", score if label_ == "you" else None, time.time())
+        elif action == "fallback" and label_ in ("unavailable", "no_model"):
+            self.stage.set_gate_hint("Voice check unavailable — listening to everyone.")
+        self._refresh_voice_chip()
 
     def _refresh_voice_chip(self):
         if not hasattr(self, "chip_voice"):
@@ -2394,12 +2426,14 @@ class MainWindow(QMainWindow):
                                  "unavailable": "Voice: unavailable"}.get(st, "Voice"), "neutral",
                                 "Voice identity — click to set up")
             return
+        gate = self._gate_on()
         v = getattr(self, "_last_verdict", None)
         if not v:
-            self.chip_voice.set("Voice ready", "neutral", "Waiting for you to speak")
+            self.chip_voice.set("Listening for you" if gate else "Voice ready", "neutral",
+                                "Voice filter on: only your voice goes to Gemini" if gate else "Waiting for you to speak")
             return
         lab, score = v
-        text = {"you": "You", "uncertain": "Not sure", "unknown": "Unknown speaker",
+        text = {"you": "You", "uncertain": "Not sure", "unknown": "Ignored" if gate else "Unknown speaker",
                 "too_short": "Too short to tell"}.get(lab, lab)
         if score is not None:
             text += f" · {score:.2f}"
@@ -2700,6 +2734,9 @@ class JarvisUI:
 
     def set_hearing_text(self, text: str) -> None:
         self._win._hearing_sig.emit(text[-220:])
+
+    def gate_event(self, action: str, label: str, score) -> None:
+        self._win._gate_sig.emit(action, label, score)
 
     def set_remote_providers(self, status_fn, forget_fn, stop_fn) -> None:
         self._win.on_remote_status = status_fn

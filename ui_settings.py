@@ -533,7 +533,10 @@ class VoicePane(Pane):
         self.rec_go.clicked.connect(self._record)
         self.rec_cancel = button("Cancel", "ghost", 30)
         self.rec_cancel.clicked.connect(self._cancel)
-        rb.addWidget(self.rec_go); rb.addWidget(self.rec_cancel); rb.addStretch()
+        self.rec_skip = button("Skip this one", "ghost", 30)
+        self.rec_skip.clicked.connect(self._skip)
+        self.rec_skip.hide()
+        rb.addWidget(self.rec_go); rb.addWidget(self.rec_skip); rb.addWidget(self.rec_cancel); rb.addStretch()
         for w in (self.rec_step, self.rec_phrase, self.rec_meter, self.rec_msg):
             rl.addWidget(w)
         rl.addLayout(rb)
@@ -551,6 +554,35 @@ class VoicePane(Pane):
             al.addWidget(b)
         al.addStretch(); al.addWidget(self.b_delete)
         self.lay.addWidget(self.actions)
+
+        self.section("Voice filter")
+        from memory.config_manager import get_voice_gate
+        g = get_voice_gate()
+        self.gate_seg = Segmented([("off", "Off"), ("prefer", "Prefer me"), ("only", "Only me")], g["mode"])
+        self.gate_seg.changed.connect(lambda k: self._gate(mode=k))
+        self.control("Who it listens to",
+                     "Off: everything it hears goes to Gemini. Prefer me: only your recognised voice; if recognition "
+                     "stops working it listens to everyone again (and says so). Only me: if recognition stops "
+                     "working, voice input is ignored until it's fixed. Typing and the phone always work.",
+                     self.gate_seg)
+        self.gate_strict = _slider(); self.gate_strict.setRange(-10, 10)
+        self.gate_strict.setValue(int(round(g["strictness"] * 100)))
+        self.gate_strict.setMinimumWidth(200)
+        self.gate_strict_lbl = label("", 11, C.TEXT_MED, mono=True)
+        self.gate_strict.valueChanged.connect(lambda v: self._gate(strictness=v / 100))
+        self.control("Strictness", "Stricter ignores more of other people but may miss you sometimes; more lenient "
+                     "is the opposite.", _rowbox(self.gate_strict, self.gate_strict_lbl, stretch_first=True))
+        self.gate_follow = _slider(); self.gate_follow.setRange(0, 60)
+        self.gate_follow.setValue(int(round(g["follow_up_s"])))
+        self.gate_follow.setMinimumWidth(200)
+        self.gate_follow_lbl = label("", 11, C.TEXT_MED, mono=True)
+        self.gate_follow.valueChanged.connect(lambda v: self._gate(follow_up_s=float(v)))
+        self.control("Short replies", "“Yes”, “stop” and other words under a second are too short to recognise. "
+                     "They're accepted only this long after something you said was recognised.",
+                     _rowbox(self.gate_follow, self.gate_follow_lbl, stretch_first=True))
+        self.gate_status = label("", 11.5, C.TEXT_MED, wrap=True)
+        self.lay.addWidget(self.gate_status)
+        self._gate_labels()
 
         self.section("Display")
         self.t_show = self.toggle("Show who's speaking", "Adds the “You / Unknown speaker” status chip and a label "
@@ -570,12 +602,42 @@ class VoicePane(Pane):
         self._meter_t = QTimer(self); self._meter_t.timeout.connect(self._tick); self._meter_t.start(33)
         self.refresh()
 
+    # voice filter
+    def _gate(self, **changes):
+        from memory.config_manager import save_voice_gate
+        save_voice_gate(changes)
+        self._gate_labels()
+
+    def _gate_labels(self):
+        from memory.config_manager import get_voice_gate
+        g = get_voice_gate()
+        v = g["strictness"]
+        self.gate_strict_lbl.setText("default" if abs(v) < 0.005 else f"{v:+.2f}")
+        self.gate_follow_lbl.setText("off" if g["follow_up_s"] < 1 else f"{g['follow_up_s']:.0f} s")
+        on = g["mode"] != "off"
+        self.gate_strict.setEnabled(on); self.gate_follow.setEnabled(on)
+        st = self.sid.status if self.sid else "unavailable"
+        if not on:
+            msg, tone = "Off — everything the microphone hears goes to Gemini.", C.TEXT_DIM
+        elif st == "ready":
+            msg, tone = ("On — only speech recognised as you is sent to Gemini. Other voices, TV and music are "
+                         "ignored. Changes to on/off take a moment (it reconnects)."), C.GREEN
+        elif g["mode"] == "only":
+            msg, tone = "Voice input is ignored until you enrol your voice above.", C.ACC2
+        else:
+            msg, tone = "Waiting for a voice profile — until you enrol, it listens to everyone.", C.TEXT_MED
+        self.gate_status.setText(msg)
+        self.gate_status.setStyleSheet(f"color: {tone}; background: transparent;")
+
     # status
     def refresh(self):
+        if hasattr(self, "gate_status"):
+            self._gate_labels()
         sid = self.sid
         st = sid.status if sid else "unavailable"
         ready = st == "ready"
-        self.b_primary.setText({"no_model": "Download voice model (26 MB)", "ready": "Enrol again"}.get(st, "Enrol my voice"))
+        from audio.speaker_id import MODEL_MB
+        self.b_primary.setText({"no_model": f"Download voice model ({MODEL_MB} MB)", "ready": "Enrol again"}.get(st, "Enrol my voice"))
         self.b_primary.setVisible(st in ("no_model", "not_enrolled"))
         self.b_primary.setEnabled(st in ("no_model", "not_enrolled") and self._mode is None)
         for b in (self.b_test, self.b_add, self.b_retrain, self.b_delete):
@@ -586,8 +648,8 @@ class VoicePane(Pane):
             self.detail_lbl.setText(f"The speaker model couldn't be loaded{': ' + sid.error if sid and sid.error else ''}.")
         elif st == "no_model":
             self.state_lbl.setText("Not set up")
-            self.detail_lbl.setText("Voice identity needs a 26 MB speaker model, downloaded once and checked against "
-                                    "a known checksum.")
+            self.detail_lbl.setText(f"Voice identity needs a {MODEL_MB} MB speaker model, downloaded once and checked "
+                                    "against a known checksum.")
         elif st == "not_enrolled":
             self.state_lbl.setText("No voice profile yet")
             self.detail_lbl.setText("Enrolment takes about a minute: read 5 short phrases out loud.")
@@ -623,6 +685,10 @@ class VoicePane(Pane):
         p.drawText(QRectF(0, 0, w, 9), Qt.AlignmentFlag.AlignRight, "You")
 
     def _tick(self):
+        last = self.sid.last if self.sid else None
+        if last is not getattr(self, "_shown_last", None) and self._mode is None:
+            self._shown_last = last
+            self.refresh()
         if self.rec.isVisible() and self.ctl.audio is not None:
             lv = self.ctl.audio.levels()
             self.rec_meter.set_level(lv.get("mic_db", -120.0), lv.get("speech", False))
@@ -645,11 +711,16 @@ class VoicePane(Pane):
         threading.Thread(target=work, daemon=True).start()
 
     def _start(self, mode: str):
-        from audio.speaker_id import ENROL_PHRASES, ENROL_SAMPLES
+        from audio.speaker_id import ENROL_CONDITIONS, ENROL_PHRASES, ENROL_SAMPLES
         self._mode, self._samples, self._idx = mode, [], 0
         self._phrases = list(ENROL_PHRASES[:ENROL_SAMPLES]) if mode == "enrol" else \
             (list(ENROL_PHRASES[:2]) if mode == "add" else ["Say anything for a few seconds — for example, what you "
                                                              "plan to do today."])
+        # (instruction, phrase) per step; condition steps can be skipped
+        self._howto = [""] * len(self._phrases)
+        if mode in ("enrol", "add"):
+            for how, phrase in ENROL_CONDITIONS:
+                self._phrases.append(phrase); self._howto.append(how)
         self.rec.show()
         self._show_step()
         self.refresh()
@@ -659,9 +730,12 @@ class VoicePane(Pane):
         title = {"enrol": "Enrolment", "add": "Add samples", "test": "Test recognition"}[self._mode]
         self.rec_step.setText(f"{title} · {self._idx + 1} of {n}" if n > 1 else title)
         self.rec_phrase.setText(f"“{self._phrases[self._idx]}”" if self._mode != "test" else self._phrases[0])
-        self.rec_msg.setText(msg or "Press Record, then read the phrase at a normal speaking volume.")
+        how = self._howto[self._idx] if self._idx < len(self._howto) else ""
+        self.rec_msg.setText(msg + ("  " if msg else "") + how if how else
+                             (msg or "Press Record, then read the phrase at a normal speaking volume."))
         self.rec_msg.setStyleSheet(f"color: {tone or C.TEXT_MED}; background: transparent;")
         self.rec_go.setEnabled(True); self.rec_go.setText("Record")
+        self.rec_skip.setVisible(bool(how))
 
     def _record(self):
         secs = 5.0 if self._mode != "test" else 4.0
@@ -681,13 +755,20 @@ class VoicePane(Pane):
             threading.Thread(target=work, daemon=True).start()
             return
         chk = SpeakerIdentity.check_sample(x)
-        if not chk.ok:
+        condition = bool(self._howto[self._idx])
+        if not chk.ok and not (condition and chk.speech_s >= 1.5 and "noise" in chk.reason):
             self._show_step(chk.reason, C.ACC2)
             return
         self._samples.append(x)
+        self._next_step("Got it.")
+
+    def _skip(self):
+        self._next_step("Skipped.")
+
+    def _next_step(self, msg: str):
         self._idx += 1
         if self._idx < len(self._phrases):
-            self._show_step("Got it.", C.GREEN)
+            self._show_step(msg, C.GREEN)
             return
         self.rec_go.setEnabled(False); self.rec_msg.setText("Building your voice profile…")
         samples, append = list(self._samples), self._mode == "add"

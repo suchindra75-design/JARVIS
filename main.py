@@ -21,6 +21,7 @@ import re
 import threading
 import time
 import json
+import os
 import sys
 import traceback
 from datetime import datetime
@@ -58,7 +59,7 @@ from actions.game_updater      import game_updater
 from actions.system_monitor    import SystemMonitor, get_system_status
 from actions.proactive         import ProactiveEngine
 from actions.web_search        import _news as _fetch_news_sync
-from memory.config_manager     import get_brief_enabled, get_audio_settings, get_voice_name, get_speaking_style
+from memory.config_manager     import get_brief_enabled, get_audio_settings, get_voice_name, get_speaking_style, get_voice_gate
 from audio.engine              import AudioEngine, AudioSettings
 from actions.confirm           import DECLINED, preview, request_confirmation
 
@@ -153,6 +154,17 @@ def _clean_transcript(text: str) -> str:
     text = _CTRL_RE.sub("", text)
     text = re.sub(r"[\x00-\x08\x0b-\x1f]", "", text)
     return text.strip()
+
+
+def _clean_piece(text: str) -> str:
+    """A streamed transcript piece. Gemini sends word fragments whose leading
+    space marks a new word ("He", "y", " Ja", "rvis"), so spaces are kept."""
+    text = _CTRL_RE.sub("", text)
+    return re.sub(r"[\x00-\x08\x0b-\x1f]", "", text)
+
+
+def _join_pieces(pieces: list[str]) -> str:
+    return re.sub(r"\s+", " ", "".join(pieces)).strip()
 
 TOOL_DECLARATIONS = [
     {
@@ -592,6 +604,10 @@ def _tool_detail(name: str, args: dict) -> str:
     return ""
 
 
+class _GateReconnect(Exception):
+    """Raised inside the session to reconnect with a different voice-gate mode."""
+
+
 class JarvisLive:
 
     def __init__(self, ui: JarvisUI):
@@ -600,6 +616,12 @@ class JarvisLive:
         self.session: "AsyncSession | None" = None
         self.audio: "AudioEngine | None" = None     # created in run()
         self.speaker_id = None                       # SpeakerIdentity, created in run()
+        self.gate = None                             # VoiceGate (audio/voice_gate.py)
+        self._gate_manual = False                    # this session: we tell Gemini when turns start/end
+        self._phone_turn = False
+        self._quick_reconnect = False
+        self._awaiting_reply = False                 # a user turn ended; Gemini hasn't finished answering
+        self._gate_log_lock = threading.Lock()
         self.out_queue: "asyncio.Queue | None" = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._is_speaking         = False
@@ -742,7 +764,16 @@ class JarvisLive:
             parts.append(mem_str)
         parts.append(sys_prompt)
 
+        manual_turns = self._configure_gate()
+        extra = {}
+        if manual_turns:
+            # The voice gate decides when the user is talking; Gemini's own
+            # server-side speech detection would react to everything it hears.
+            extra["realtime_input_config"] = types.RealtimeInputConfig(
+                automatic_activity_detection=types.AutomaticActivityDetection(disabled=True))
+
         return types.LiveConnectConfig(
+            **extra,
             response_modalities=["AUDIO"],
             output_audio_transcription={},
             input_audio_transcription={},
@@ -957,7 +988,18 @@ class JarvisLive:
             session = self.session
             if out_queue and session:
                 msg = await out_queue.get()
-                await session.send_realtime_input(media=msg)
+                act = msg.get("activity") if isinstance(msg, dict) else None
+                if act == "start":
+                    await session.send_realtime_input(activity_start=types.ActivityStart())
+                elif act in ("end", "cancel"):
+                    # "cancel" closes a turn opened early that turned out not to be
+                    # the user: it has no audio, and Gemini doesn't answer it.
+                    await session.send_realtime_input(activity_end=types.ActivityEnd())
+                    if act == "end":
+                        self._awaiting_reply = True
+                        self._awaiting_since = time.monotonic()
+                else:
+                    await session.send_realtime_input(media=msg)
             else:
                 await asyncio.sleep(0.1)
 
@@ -977,15 +1019,122 @@ class JarvisLive:
             loop.call_soon_threadsafe(self._enqueue_mic, data)
 
     def _enqueue_mic(self, data: bytes) -> None:
+        self._put_out({"data": data, "mime_type": "audio/pcm"})
+
+    def _put_out(self, item: dict) -> None:
+        """Queue for Gemini. When full, drop the oldest audio — never a turn marker."""
         q = self.out_queue
         if q is None:
             return
-        if q.full():                       # drop the oldest rather than raise or grow
-            try:
-                q.get_nowait()
-            except Exception:
-                pass
-        q.put_nowait({"data": data, "mime_type": "audio/pcm"})
+        if q.full():
+            items = []
+            while not q.empty():
+                items.append(q.get_nowait())
+            for i, it in enumerate(items):
+                if not (isinstance(it, dict) and "activity" in it):
+                    del items[i]
+                    break
+            for it in items:
+                q.put_nowait(it)
+        try:
+            q.put_nowait(item)
+        except asyncio.QueueFull:
+            pass
+
+    # ── personal voice gate ─────────────────────────────────────────────────
+
+    def _gate_wanted(self) -> bool:
+        if self.audio is None or self.speaker_id is None:
+            return False
+        mode = get_voice_gate()["mode"]
+        if mode == "off":
+            return False
+        return self.speaker_id.status == "ready" or mode == "only"
+
+    def _configure_gate(self) -> bool:
+        """Install or remove the gate for the session about to start.
+        Returns True when Gemini must be told when turns start and end."""
+        want = self._gate_wanted()
+        if want:
+            if self.gate is None:
+                from audio.voice_gate import VoiceGate
+                self.gate = VoiceGate(self.speaker_id, on_audio=self._on_mic_chunk,
+                                      on_activity=self._on_mic_activity, on_event=self._on_gate_event,
+                                      open_early=self._gate_may_open_early)
+                self.gate.warm_up()
+            self._tune_gate()
+            self.gate.reset()
+            self.audio.gate = self.gate
+            print(f"[VoiceGate] On ({self.gate.policy}): only your voice is sent to Gemini.")
+        elif self.audio is not None:
+            self.audio.gate = None
+        self._gate_manual = want
+        self._phone_turn = False
+        self._awaiting_reply = False
+        return want
+
+    def _gate_may_open_early(self) -> bool:
+        """Audio thread: opening a turn now must not interrupt an answer in progress."""
+        if self._awaiting_reply and time.monotonic() - getattr(self, "_awaiting_since", 0) > 30:
+            self._awaiting_reply = False                 # no turn_complete came; don't stay late forever
+        return not self._awaiting_reply and not self._is_speaking
+
+    def _tune_gate(self) -> None:
+        g = self.gate
+        if g is None:
+            return
+        cfg = get_voice_gate()
+        g.policy = cfg["mode"] if cfg["mode"] in ("prefer", "only") else "prefer"
+        g.follow_up_s = cfg["follow_up_s"]
+        g.threshold_offset = cfg["strictness"]
+
+    def _on_mic_activity(self, kind: str) -> None:
+        """Audio thread: the gate says a turn of the user's speech started/ended."""
+        loop = self._loop
+        if loop is not None:
+            loop.call_soon_threadsafe(self._put_out, {"activity": kind})
+
+    def _on_gate_event(self, ev) -> None:
+        """Audio thread: the gate decided about an utterance."""
+        score = f"{ev.score:.2f}" if ev.score is not None else "–"
+        thr = f"{ev.threshold:.2f}" if ev.threshold is not None else "–"
+        print(f"[VoiceGate] {ev.action:<8} {ev.label:<12} score {score} / {thr}  "
+              f"speech {ev.speech_s:.1f}s  decided {ev.decide_ms:.0f} ms (model {ev.verify_ms:.0f} ms)")
+        if ev.label in ("you", "unknown", "uncertain"):
+            self.ui.set_speaker(ev.label, ev.score)
+        if hasattr(self.ui, "gate_event"):
+            self.ui.gate_event(ev.action, ev.label, ev.score)
+        self._log_gate_event(ev)
+
+    def _log_gate_event(self, ev) -> None:
+        """Decision log for measuring accuracy (numbers only — no audio, no words)."""
+        try:
+            path = BASE_DIR / "memory" / "voice_gate_log.csv"
+            new = not path.exists()
+            with self._gate_log_lock:
+                fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+                with os.fdopen(fd, "a", encoding="utf-8") as f:
+                    if new:
+                        f.write("time,action,label,score,threshold,speech_s,decide_ms,verify_ms\n")
+                    f.write(f"{datetime.now().isoformat(timespec='seconds')},{ev.action},{ev.label},"
+                            f"{'' if ev.score is None else round(ev.score, 4)},"
+                            f"{'' if ev.threshold is None else round(ev.threshold, 4)},"
+                            f"{ev.speech_s:.2f},{ev.decide_ms:.0f},{ev.verify_ms:.0f}\n")
+        except Exception as e:
+            print(f"[VoiceGate] log failed: {e}")
+
+    async def _watch_gate(self):
+        """Reconnect when the gate should switch on/off (enrolled, deleted, mode
+        changed); apply strictness / follow-up changes live."""
+        while True:
+            await asyncio.sleep(1.0)
+            if self._gate_wanted() != self._gate_manual:
+                print("[VoiceGate] Voice filter setting changed — reconnecting to apply it.")
+                self.ui.write_log("SYS: Voice filter changed — reconnecting.")
+                self._quick_reconnect = True
+                raise _GateReconnect()
+            if self._gate_manual:
+                self._tune_gate()
 
     async def _listen_audio(self):
         """Keeps the session's task layout; capture itself runs in the AudioEngine."""
@@ -1006,10 +1155,11 @@ class JarvisLive:
 
                 def _post_user_turn():
                     """Show what the user said in the conversation and on the phone."""
-                    full = " ".join(in_buf).strip()
+                    full = _join_pieces(in_buf)
                     in_buf.clear()
                     if not full:
                         return
+                    print(f"[JARVIS] Heard: {full[:120]}")
                     if hasattr(self.ui, "add_message"):
                         self.ui.add_message("user", full, "voice")
                     else:
@@ -1044,23 +1194,24 @@ class JarvisLive:
                             self.set_speaking(False)
 
                         if sc.output_transcription and sc.output_transcription.text:
-                            txt = _clean_transcript(sc.output_transcription.text)
+                            txt = _clean_piece(sc.output_transcription.text)
                             if txt and txt != (out_buf[-1] if out_buf else ""):
                                 if in_buf:
                                     _post_user_turn()
                                 out_buf.append(txt)
                                 if hasattr(self.ui, "set_speaking_text"):
-                                    self.ui.set_speaking_text(" ".join(out_buf))
+                                    self.ui.set_speaking_text(_join_pieces(out_buf))
 
                         if sc.input_transcription and sc.input_transcription.text:
-                            txt = _clean_transcript(sc.input_transcription.text)
+                            txt = _clean_piece(sc.input_transcription.text)
                             if txt:
                                 in_buf.append(txt)
                                 self._last_user_speech = time.monotonic()
                                 if hasattr(self.ui, "set_hearing_text"):
-                                    self.ui.set_hearing_text(" ".join(in_buf))
+                                    self.ui.set_hearing_text(_join_pieces(in_buf))
 
                         if sc.turn_complete:
+                            self._awaiting_reply = False
                             if self._turn_done_event:
                                 self._turn_done_event.set()
 
@@ -1074,7 +1225,7 @@ class JarvisLive:
 
                             _post_user_turn()
 
-                            full_out = " ".join(out_buf).strip()
+                            full_out = _join_pieces(out_buf)
                             if full_out:
                                 if hasattr(self.ui, "add_message"):
                                     self.ui.add_message("assistant", full_out)
@@ -1329,17 +1480,20 @@ class JarvisLive:
             except asyncio.TimeoutError:
                 # No audio for 1 s → phone mic inactive, give PC mic back
                 self._phone_active = False
+                if self._phone_turn:
+                    self._phone_turn = False
+                    self._put_out({"activity": "end"})
                 continue
             self._phone_active = True   # phone is streaming — silence PC mic
             with self._speaking_lock:
                 speaking = self._is_speaking
-            if not speaking and not self.ui.muted:
-                out_queue = self.out_queue
-                if out_queue:
-                    try:
-                        out_queue.put_nowait(chunk)
-                    except asyncio.QueueFull:
-                        pass
+            if not speaking and not self.ui.muted and self.out_queue:
+                # The phone is a signed-in device, so its audio skips the voice
+                # check; with the gate on, Gemini still needs turn markers.
+                if self._gate_manual and not self._phone_turn:
+                    self._phone_turn = True
+                    self._put_out({"activity": "start"})
+                self._put_out(chunk)
 
     def _on_phone_connected(self) -> None:
         self.ui.write_log("SYS: Phone connected via Remote Dashboard.")
@@ -1523,6 +1677,7 @@ class JarvisLive:
                     tg.create_task(self._receive_audio())
                     tg.create_task(self._play_audio())
                     tg.create_task(self._run_system_monitor())
+                    tg.create_task(self._watch_gate())
                     tg.create_task(self._run_proactive_mode())
                     if self._dashboard:
                         tg.create_task(self._relay_phone_audio())
@@ -1543,8 +1698,11 @@ class JarvisLive:
                 # exception escape the while-loop and causing asyncio.run() to
                 # start shutdown — resulting in "executor after shutdown" errors).
                 err_str = str(e)
-                print(f"[JARVIS] Error ({type(e).__name__}): {e}")
-                traceback.print_exc()
+                if self._quick_reconnect:
+                    err_str = ""                          # planned: voice-gate mode change
+                else:
+                    print(f"[JARVIS] Error ({type(e).__name__}): {e}")
+                    traceback.print_exc()
 
                 # Invalid API key — stop hammering the API, prompt re-configuration
                 if "API key not valid" in err_str or "1007" in err_str:
@@ -1585,10 +1743,34 @@ class JarvisLive:
                 await self._dashboard.broadcast({"type": "status", "state": "sleeping"})
 
             delay = getattr(self, "_conn_backoff", 3)
+            if self._quick_reconnect:
+                self._quick_reconnect = False
+                delay = 0.3
             print(f"[JARVIS] Reconnecting in {delay}s...")
             await asyncio.sleep(delay)
 
+def _single_instance_lock():
+    """Only one JARVIS at a time: two would share the mic and both answer."""
+    path = BASE_DIR / "config" / ".jarvis.lock"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    f = open(path, "a+")
+    try:
+        if sys.platform == "win32":
+            import msvcrt
+            msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        return None
+    return f                                   # keep open for the life of the process
+
+
 def main():
+    lock = _single_instance_lock()
+    if lock is None:
+        print("[JARVIS] Already running — not starting a second copy.")
+        return
     ui = JarvisUI("face.png")
     live: dict = {}
 

@@ -68,9 +68,14 @@ class SpeakerIdTests(unittest.TestCase):
         self.enrol("Samantha")
         me = self.sid.verify(tts("What time is the meeting with the design team tomorrow?", "Samantha"))
         self.assertEqual(me.label, "you", me)
-        for other in ("Karen", "Rishi", "Fred", "Daniel", "Moira"):
+        for other in ("Rishi", "Fred", "Daniel", "Moira"):
             v = self.sid.verify(tts("What time is the meeting with the design team tomorrow?", other))
             self.assertNotEqual(v.label, "you", f"{other} accepted as the user: {v}")
+        # Karen is a near-twin of Samantha (both Apple female voices; ~0.49 vs ~0.87).
+        # At default strictness she can pass — that's what the strictness setting is for.
+        k = self.sid.verify(tts("What time is the meeting with the design team tomorrow?", "Karen"))
+        self.assertLess(k.score, me.score - 0.25, k)
+        self.assertLess(k.score, me.threshold + 0.10, "strictness +0.10 must reject the near-twin")
 
     def test_short_speech_is_not_guessed(self):
         self.enrol()

@@ -144,6 +144,34 @@ def save_speaking_style(style: str) -> None:
     update_config({"speaking_style": (style or "").strip()[:400]})
 
 
+# Personal voice gate (audio/voice_gate.py). mode: "off" | "prefer" | "only".
+# "prefer" passes speech through if voice recognition isn't available;
+# "only" ignores voice input then. strictness is added to the profile's
+# match threshold (+ stricter, − more lenient).
+VOICE_GATE_DEFAULTS = {"mode": "prefer", "follow_up_s": 20.0, "strictness": 0.0}
+
+
+def get_voice_gate() -> dict:
+    g = dict(VOICE_GATE_DEFAULTS)
+    saved = load_api_keys().get("voice_gate")
+    if isinstance(saved, dict):
+        if saved.get("mode") in ("off", "prefer", "only"):
+            g["mode"] = saved["mode"]
+        try:
+            g["follow_up_s"] = float(min(60.0, max(0.0, float(saved.get("follow_up_s", g["follow_up_s"])))))
+            g["strictness"] = float(min(0.15, max(-0.15, float(saved.get("strictness", g["strictness"])))))
+        except (TypeError, ValueError):
+            pass
+    return g
+
+
+def save_voice_gate(changes: dict) -> dict:
+    g = get_voice_gate()
+    g.update({k: v for k, v in changes.items() if k in VOICE_GATE_DEFAULTS})
+    update_config({"voice_gate": g})
+    return get_voice_gate()
+
+
 def get_brief_enabled() -> bool:
     return load_api_keys().get("morning_brief_enabled", True)
 
