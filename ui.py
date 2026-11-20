@@ -2208,7 +2208,7 @@ class MainWindow(QMainWindow):
         self.chip_mic.setToolTip("Microphone — click for audio settings")
         self.chip_mic.clicked.connect(lambda: self.open_settings("Audio"))
         self.chip_voice = Chip("Voice: not set up", "neutral")
-        self.chip_voice.setToolTip("Voice identity — who is speaking (display only)")
+        self.chip_voice.setToolTip("Voice identity — who is speaking. Click for enrolment and the accuracy check")
         self.chip_voice.clicked.connect(lambda: self.open_settings("Voice identity"))
         self.chip_phone = Chip("Phone off", "neutral")
         self.chip_phone.setToolTip("Phone remote control")

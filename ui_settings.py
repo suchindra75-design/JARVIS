@@ -461,6 +461,11 @@ class AudioPane(Pane):
                 getattr(self, t).stop()
 
 
+def check_results_path() -> str:
+    """Where accuracy-check results are kept (numbers only, readable by this user only)."""
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "memory", "voice_gate_check.json")
+
+
 # ── Voice identity ───────────────────────────────────────────────────────────
 
 class ConfidenceRing(QWidget):
@@ -874,7 +879,7 @@ class VoicePane(Pane):
             return
         self._check_results = []
         try:
-            path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "memory", "voice_gate_check.json")
+            path = check_results_path()
             old = []
             if os.path.exists(path):
                 with open(path, encoding="utf-8") as f:

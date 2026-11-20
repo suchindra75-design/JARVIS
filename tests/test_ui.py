@@ -336,6 +336,28 @@ class VoiceIdentityFlowTests(UITestBase):
         pump(100)
         self.assertEqual(got["v"].label, "you")
         self.assertTrue(self.w.chip_voice.text().startswith("You"))
+        # accuracy check: one spoken step, one skipped, then stopped — the result is still saved
+        import json, tempfile, ui_settings
+        out = os.path.join(tempfile.mkdtemp(), "check.json")
+        with mock.patch.object(ui_settings, "check_results_path", return_value=out):
+            vp.b_check.click(); pump(50)
+            self.assertTrue(vp.rec.isVisible())
+            self.assertTrue(self.w._voice_setup, "check phrases must not reach Gemini")
+            vp.rec_go.click()
+            self.assertTrue(self.eng.mic_test_running)
+            pcm = np.concatenate([tts16("Open my calendar for tomorrow."), np.zeros(16000 * 5, np.int16)])[: 16000 * 5]
+            self.feed(pcm)
+            self.assertTrue(wait_for(lambda: vp._idx == 1, 20), vp.rec_msg.text())
+            pump(50)
+            vp.rec_skip.click(); pump(50)
+            vp.rec_cancel.click(); pump(50)
+            self.assertFalse(self.w._voice_setup)
+            with open(out, encoding="utf-8") as f:
+                saved = json.load(f)
+        self.assertEqual(len(saved), 1)
+        self.assertFalse(saved[0]["complete"])
+        self.assertEqual([(r["step"], r["expect"], r["accepted"]) for r in saved[0]["results"]],
+                         [("normal", "you", True)])
         # delete needs two clicks
         vp.b_delete.click()
         self.assertTrue(os.path.exists(self.sid.profile_path))
