@@ -186,7 +186,8 @@ class EngineTests(unittest.TestCase):
         time.sleep(0.1)
         self.assertEqual(len(chunks), before, "mic must be closed while JARVIS plays")
         self.pull_speaker(eng, 60)                  # drain everything
-        self.assertTrue(self.wait(lambda: not eng.is_playing))
+        # a real output device keeps pulling; keep the fake one running too
+        self.assertTrue(self.wait(lambda: (self.pull_speaker(eng, 1) is not None) and not eng.is_playing))
         time.sleep(0.35)                            # past the tail
         self.feed_mic(eng, 0.2)
         self.assertTrue(self.wait(lambda: len(chunks) > before), "mic must reopen after the tail")
@@ -208,7 +209,7 @@ class EngineTests(unittest.TestCase):
         self.assertLess(float(np.max(np.abs(after[-OUT_BLOCK:]))), 1e-6, "silent within 50 ms")
         joined = np.concatenate([before[-10:], after[:40]])
         self.assertLess(float(np.max(np.abs(np.diff(joined)))), 0.1)
-        self.assertTrue(self.wait(lambda: not eng.is_playing, 0.5))
+        self.assertTrue(self.wait(lambda: (self.pull_speaker(eng, 1) is not None) and not eng.is_playing, 0.5))
 
     def test_capture_ring_is_bounded_when_worker_is_starved(self):
         eng, _, _, _ = self.make()

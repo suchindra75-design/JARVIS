@@ -93,14 +93,15 @@ class OutputEnhancer:
         self.gain_reduction_db = -20 * math.log10(max(self._lim_gain, 1e-6))
         return out
 
-    def flush_tail(self, fade_ms: float = 10.0) -> np.ndarray:
-        """Return the look-ahead tail faded out (used when playback is interrupted)."""
+    def drain(self) -> np.ndarray:
+        """Return the 2 ms still held in the look-ahead (end of a reply) and clear it."""
         tail = self._delay.copy()
-        n = len(tail)
-        if n:
-            tail *= np.linspace(1.0, 0.0, n, dtype=np.float32)
-        self.reset()
+        self._delay[:] = 0
         return tail
+
+    @property
+    def holding(self) -> bool:
+        return bool(np.any(self._delay))
 
 
 class Ducker:

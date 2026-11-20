@@ -111,6 +111,7 @@ class AudioEngine:
         self._raw_out = collections.deque()                  # JARVIS audio not yet enhanced (bytes)
         self._raw_out_samples = 0
         self._raw_lock = threading.Lock()
+        self._gen = 0                                        # bumped by flush(); stale audio is dropped
         self._play = collections.deque()                     # enhanced float32 blocks
         self._play_samples = 0
         self._play_lock = threading.Lock()
@@ -308,12 +309,13 @@ class AudioEngine:
         with self._raw_lock:
             self._raw_out.clear()
             self._raw_out_samples = 0
-        tail = self.enhancer.flush_tail()
+            self._gen += 1
         with self._play_lock:
-            nxt = self._play[0] if self._play else np.zeros(0, np.float32)
-            fade = np.concatenate([tail, nxt[: OUT_BLOCK]])
-            if len(fade):
-                fade = fade * np.linspace(1.0, 0.0, len(fade), dtype=np.float32)
+            self._gen += 1
+            self.enhancer.reset()                       # drop the look-ahead (future audio)
+            # fade the very next 10 ms that would have played, so there is no click
+            nxt = self._play[0][:OUT_BLOCK] if self._play else np.zeros(0, np.float32)
+            fade = nxt * np.linspace(1.0, 0.0, len(nxt), dtype=np.float32) if len(nxt) else nxt
             self._play.clear()
             self._play_samples = 0
             if len(fade):
@@ -456,12 +458,22 @@ class AudioEngine:
                             break
                         raw = self._raw_out.popleft()
                         self._raw_out_samples -= len(raw) // 2
+                        gen = self._gen
                     x = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
                     for i in range(0, len(x), OUT_BLOCK):
                         y = self.enhancer.process(x[i:i + OUT_BLOCK])
                         with self._play_lock:
+                            if gen != self._gen:          # interrupted while we were processing
+                                break
                             self._play.append(y)
                             self._play_samples += len(y)
+                # end of a reply: push out the last 2 ms held by the limiter's look-ahead
+                if not self._raw_out and self._play_samples < OUT_BLOCK and self.enhancer.holding:
+                    with self._play_lock:
+                        tail = self.enhancer.drain()
+                        self._play.append(tail)
+                        self._play_samples += len(tail)
+                    self._prebuffering = False
                 if self._prebuffering and self._play_samples >= PREBUFFER_MS * OUT_RATE / 1000:
                     self._prebuffering = False
 
