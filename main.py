@@ -983,6 +983,11 @@ class JarvisLive:
         )
 
     async def _send_realtime(self):
+        # One task per session, so this starts closed for every new session.
+        # With app-controlled turns Gemini closes the whole session (1007) on an
+        # "end" without a "start" — e.g. a start lost while reconnecting — so
+        # markers are kept paired here, and audio outside a turn isn't sent.
+        turn_open = False
         while True:
             out_queue = self.out_queue
             session = self.session
@@ -990,15 +995,24 @@ class JarvisLive:
                 msg = await out_queue.get()
                 act = msg.get("activity") if isinstance(msg, dict) else None
                 if act == "start":
+                    if turn_open:
+                        continue
                     await session.send_realtime_input(activity_start=types.ActivityStart())
+                    turn_open = True
                 elif act in ("end", "cancel"):
                     # "cancel" closes a turn opened early that turned out not to be
                     # the user: it has no audio, and Gemini doesn't answer it.
+                    if not turn_open:
+                        print(f"[VoiceGate] dropped an unpaired turn {act}")
+                        continue
                     await session.send_realtime_input(activity_end=types.ActivityEnd())
+                    turn_open = False
                     if act == "end":
                         self._awaiting_reply = True
                         self._awaiting_since = time.monotonic()
                 else:
+                    if self._gate_manual and not turn_open:
+                        continue                         # left over from a turn that's closed
                     await session.send_realtime_input(media=msg)
             else:
                 await asyncio.sleep(0.1)
@@ -1080,6 +1094,8 @@ class JarvisLive:
         """Audio thread: opening a turn now must not interrupt an answer in progress."""
         if self._awaiting_reply and time.monotonic() - getattr(self, "_awaiting_since", 0) > 30:
             self._awaiting_reply = False                 # no turn_complete came; don't stay late forever
+        if self.session is None or self.out_queue is None:
+            return False                                 # connecting: a start now would be lost
         return not self._awaiting_reply and not self._is_speaking
 
     def _tune_gate(self) -> None:
@@ -1657,6 +1673,8 @@ class JarvisLive:
                     self.session          = session
                     self.out_queue        = asyncio.Queue(maxsize=200)
                     self._turn_done_event = asyncio.Event()
+                    if self.gate is not None:
+                        self.gate.reset()                # drop any turn begun while connecting
 
                     # Reset transient state that must not carry over from a previous session
                     self._pending_vision       = None
@@ -1738,6 +1756,7 @@ class JarvisLive:
                     self._conn_backoff = 3
             finally:
                 self.session = None
+                self.out_queue = None                    # its sender is gone; nothing queued now would be sent
 
             self.set_speaking(False)
             self.ui.set_state("SLEEPING")

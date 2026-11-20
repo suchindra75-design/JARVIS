@@ -59,6 +59,72 @@ class Harness:
         return [k for k, _ in self.log if k != "audio"]
 
 
+class TurnPairingTests(unittest.TestCase):
+    """main._send_realtime: Gemini closes the session on an unpaired activity_end."""
+
+    def _run(self, items, manual=True):
+        import asyncio
+        import types as pytypes
+        from main import JarvisLive
+
+        sent = []
+
+        class Session:
+            async def send_realtime_input(self, **kw):
+                sent.append(next(iter(kw)) if "media" not in kw else "audio")
+
+        async def go():
+            q = asyncio.Queue()
+            for it in items:
+                q.put_nowait(it)
+            fake = pytypes.SimpleNamespace(out_queue=q, session=Session(), _gate_manual=manual,
+                                           _awaiting_reply=False)
+            task = asyncio.create_task(JarvisLive._send_realtime(fake))
+            while not q.empty():
+                await asyncio.sleep(0.01)
+            await asyncio.sleep(0.02)
+            task.cancel()
+            return fake
+
+        fake = asyncio.run(go())
+        return sent, fake
+
+    A = {"data": b"\0\0", "mime_type": "audio/pcm"}
+
+    def test_end_without_start_is_not_sent(self):
+        sent, fake = self._run([{"activity": "cancel"}, {"activity": "end"}])
+        self.assertEqual(sent, [])
+        self.assertFalse(fake._awaiting_reply)
+
+    def test_normal_turn_passes_through(self):
+        sent, fake = self._run([{"activity": "start"}, self.A, self.A, {"activity": "end"}])
+        self.assertEqual(sent, ["activity_start", "audio", "audio", "activity_end"])
+        self.assertTrue(fake._awaiting_reply)
+
+    def test_audio_outside_a_turn_is_dropped_in_manual_mode(self):
+        sent, _ = self._run([self.A, {"activity": "start"}, self.A, {"activity": "end"}, self.A])
+        self.assertEqual(sent, ["activity_start", "audio", "activity_end"])
+
+    def test_double_start_sends_one(self):
+        sent, _ = self._run([{"activity": "start"}, {"activity": "start"}, {"activity": "end"},
+                             {"activity": "end"}])
+        self.assertEqual(sent, ["activity_start", "activity_end"])
+
+    def test_automatic_mode_streams_audio(self):
+        sent, _ = self._run([self.A, self.A], manual=False)
+        self.assertEqual(sent, ["audio", "audio"])
+
+
+class GateResetTests(unittest.TestCase):
+    def test_reset_forgets_an_open_turn(self):
+        h = Harness(FakeID("unknown", 0.1, delay=0.5), open_early=lambda: True)
+        h.run([(0.3, True)], settle=False)
+        self.assertEqual(h.kinds, ["start"])
+        h.gate.reset()                                   # new Gemini session
+        h.run([(0.1, False)], allowed=False)
+        self.assertEqual(h.kinds, ["start"], "no cancel for a turn the new session never saw")
+
+
 class EarlyOpenTests(unittest.TestCase):
     """Turn opened at speech start (Gemini idle), audio after recognition."""
 

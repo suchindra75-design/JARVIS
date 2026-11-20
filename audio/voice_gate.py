@@ -192,6 +192,7 @@ class VoiceGate:
         """Forget any utterance in progress (e.g. a new Gemini session started)."""
         self._reset()
         self._preroll.clear()
+        self._opened = False                         # a new session has no turn open
 
     def close(self) -> None:
         self._pool.shutdown(wait=False, cancel_futures=True)

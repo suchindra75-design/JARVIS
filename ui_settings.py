@@ -850,8 +850,6 @@ class VoicePane(Pane):
         self.refresh()
 
     def _finish_check(self):
-        import json
-        from datetime import datetime
         r = self._check_results
         you = [x for x in r if x["expect"] == "you"]
         oth = [x for x in r if x["expect"] == "other"]
@@ -859,25 +857,39 @@ class VoicePane(Pane):
         let = sum(x["accepted"] for x in oth)
         summary = (f"Recognised you {len(you) - missed} of {len(you)} times"
                    + (f"; let through {let} of {len(oth)} recordings that weren't you." if oth else "."))
-        try:
-            path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "memory", "voice_gate_check.json")
-            old = []
-            if os.path.exists(path):
-                with open(path, encoding="utf-8") as f:
-                    old = json.load(f)
-            old.append({"time": datetime.now().isoformat(timespec="seconds"), "results": r})
-            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                json.dump(old, f, indent=1)
-        except Exception as e:
-            print(f"[VoiceGate] couldn't save the check: {e}")
+        self._save_check(complete=True)
         self._mode = None; self.rec.hide(); self.ctl.set_voice_setup(False)
         self.ctl.toast("Accuracy check done", summary, "ok" if missed == 0 and let == 0 else "warn")
         self.detail_lbl.setText(summary)
         self.refresh()
         self.detail_lbl.setText(summary)
 
+    def _save_check(self, complete: bool) -> None:
+        """Append this run's results to memory/voice_gate_check.json (numbers only).
+        A run stopped part-way is kept too, marked incomplete."""
+        import json
+        from datetime import datetime
+        r = list(getattr(self, "_check_results", []) or [])
+        if not r:
+            return
+        self._check_results = []
+        try:
+            path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "memory", "voice_gate_check.json")
+            old = []
+            if os.path.exists(path):
+                with open(path, encoding="utf-8") as f:
+                    old = json.load(f)
+            old.append({"time": datetime.now().isoformat(timespec="seconds"), "complete": complete, "results": r})
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(old, f, indent=1)
+            print(f"[VoiceGate] accuracy check saved: {len(r)} steps{'' if complete else ' (stopped early)'}")
+        except Exception as e:
+            print(f"[VoiceGate] couldn't save the check: {e}")
+
     def _cancel(self):
+        if self._mode == "check":
+            self._save_check(complete=False)
         self._mode = None; self.rec.hide(); self.ctl.set_voice_setup(False); self.refresh()
 
     def _retrain(self):
@@ -896,6 +908,8 @@ class VoicePane(Pane):
 
     def stop(self):
         self._meter_t.stop()
+        if self._mode == "check":
+            self._save_check(complete=False)    # Settings closed mid-check: keep what was measured
         self.ctl.set_voice_setup(False)         # Settings closed mid-enrolment
 
 
