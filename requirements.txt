@@ -27,3 +27,7 @@ win10toast; sys_platform == "win32"
 pywinauto; sys_platform == "win32"
 pywin32; sys_platform == "win32"
 qrcode[pil]
+# audio: WebRTC echo cancellation / noise suppression (via LiveKit's APM), VAD, resampling
+livekit==1.2.0
+webrtcvad-wheels==2.0.14.post1
+soxr==1.1.0

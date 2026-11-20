@@ -31,7 +31,6 @@ if TYPE_CHECKING:
     from google.genai.live import AsyncSession
     from dashboard.server import DashboardServer
 
-import sounddevice as sd
 from google import genai
 from google.genai import types
 from ui import JarvisUI
@@ -59,7 +58,8 @@ from actions.game_updater      import game_updater
 from actions.system_monitor    import SystemMonitor, get_system_status
 from actions.proactive         import ProactiveEngine
 from actions.web_search        import _news as _fetch_news_sync
-from memory.config_manager     import get_brief_enabled
+from memory.config_manager     import get_brief_enabled, get_audio_settings
+from audio.engine              import AudioEngine, AudioSettings
 from actions.confirm           import DECLINED, preview, request_confirmation
 
 
@@ -131,10 +131,6 @@ BASE_DIR        = get_base_dir()
 API_CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
 PROMPT_PATH     = BASE_DIR / "core" / "prompt.txt"
 LIVE_MODEL          = "models/gemini-2.5-flash-native-audio-preview-12-2025"
-CHANNELS            = 1
-SEND_SAMPLE_RATE    = 16000
-RECEIVE_SAMPLE_RATE = 24000
-CHUNK_SIZE          = 1024
 
 def _get_api_key() -> str:
     with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
@@ -591,7 +587,7 @@ class JarvisLive:
         self.ui             = ui
         self._asst_name     = "JARVIS"   # updated each session from config
         self.session: "AsyncSession | None" = None
-        self.audio_in_queue: "asyncio.Queue | None" = None
+        self.audio: "AudioEngine | None" = None     # created in run()
         self.out_queue: "asyncio.Queue | None" = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._is_speaking         = False
@@ -660,19 +656,11 @@ class JarvisLive:
             self.ui.set_state("LISTENING")
 
     def interrupt(self) -> None:
-        """Stop JARVIS mid-speech: drain queued audio and open mic immediately."""
+        """Stop JARVIS mid-speech: flush the speaker within ~10 ms and open the mic."""
         self._interrupted = True
-        q = self.audio_in_queue
-        if q:
-            drained = 0
-            while True:
-                try:
-                    q.get_nowait()
-                    drained += 1
-                except Exception:
-                    break
-            if drained:
-                print(f"[JARVIS] ✋ Interrupted — {drained} audio chunks discarded")
+        if self.audio:
+            self.audio.flush()
+            print("[JARVIS] ✋ Interrupted — playback flushed")
         self.set_speaking(False)
         if self._turn_done_event:
             self._turn_done_event.clear()
@@ -940,36 +928,37 @@ class JarvisLive:
             else:
                 await asyncio.sleep(0.1)
 
+    # ── audio engine glue ───────────────────────────────────────────────────
+    # The AudioEngine (audio/engine.py) owns the mic, speaker and all
+    # processing on its own threads. These hooks only move bytes between it
+    # and the Gemini session.
+
+    def _mic_allowed(self) -> bool:
+        """Called on the audio thread: may the PC mic be sent to Gemini right now?"""
+        return not self.ui.muted and not self._phone_active
+
+    def _on_mic_chunk(self, data: bytes) -> None:
+        """Called on the audio thread with 20 ms of processed 16 kHz mic audio."""
+        loop = self._loop
+        if loop is not None:
+            loop.call_soon_threadsafe(self._enqueue_mic, data)
+
+    def _enqueue_mic(self, data: bytes) -> None:
+        q = self.out_queue
+        if q is None:
+            return
+        if q.full():                       # drop the oldest rather than raise or grow
+            try:
+                q.get_nowait()
+            except Exception:
+                pass
+        q.put_nowait({"data": data, "mime_type": "audio/pcm"})
+
     async def _listen_audio(self):
-        print("[JARVIS] 🎤 Mic started")
-        loop = asyncio.get_event_loop()
-
-        def callback(indata, frames, time_info, status):
-            with self._speaking_lock:
-                jarvis_speaking = self._is_speaking
-            if not jarvis_speaking and not self.ui.muted and not self._phone_active:
-                data = indata.tobytes()
-                out_queue = self.out_queue
-                if out_queue:
-                    loop.call_soon_threadsafe(
-                        out_queue.put_nowait,
-                        {"data": data, "mime_type": "audio/pcm"}
-                    )
-
-        try:
-            with sd.InputStream(
-                samplerate=SEND_SAMPLE_RATE,
-                channels=CHANNELS,
-                dtype="int16",
-                blocksize=CHUNK_SIZE,
-                callback=callback,
-            ):
-                print("[JARVIS] 🎤 Mic stream open")
-                while True:
-                    await asyncio.sleep(0.1)
-        except Exception as e:
-            print(f"[JARVIS] ❌ Mic: {e}")
-            raise
+        """Keeps the session's task layout; capture itself runs in the AudioEngine."""
+        print("[JARVIS] 🎤 Mic via AudioEngine")
+        while True:
+            await asyncio.sleep(3600)
 
     async def _receive_audio(self):
         print("[JARVIS] 👂 Recv started")
@@ -978,8 +967,7 @@ class JarvisLive:
         try:
             while True:
                 session = self.session
-                audio_in_queue = self.audio_in_queue
-                if not session or not audio_in_queue:
+                if not session:
                     await asyncio.sleep(0.1)
                     continue
 
@@ -991,15 +979,17 @@ class JarvisLive:
                         else:
                             if self._turn_done_event and self._turn_done_event.is_set():
                                 self._turn_done_event.clear()
-                            # Split into ~50 ms chunks so interrupt() stops audio within 50 ms
-                            # (24000 Hz × 2 bytes/sample × 0.05 s = 2400 bytes per slice)
-                            _audio_data = response.data
-                            _SLICE = 2400
-                            for _i in range(0, len(_audio_data), _SLICE):
-                                audio_in_queue.put_nowait(_audio_data[_i : _i + _SLICE])
+                            if self.audio:
+                                self.audio.play(response.data)     # non-blocking
 
                     if response.server_content:
                         sc = response.server_content
+
+                        # Gemini stopped its answer because it heard the user:
+                        # stop the speaker now instead of finishing the queue.
+                        if getattr(sc, "interrupted", False) and self.audio:
+                            self.audio.flush()
+                            self.set_speaking(False)
 
                         if sc.output_transcription and sc.output_transcription.text:
                             txt = _clean_transcript(sc.output_transcription.text)
@@ -1097,48 +1087,27 @@ class JarvisLive:
             raise
 
     async def _play_audio(self):
-        print("[JARVIS] 🔊 Play started")
+        """Mirror the AudioEngine's real playback state into the UI (SPEAKING/LISTENING).
 
-        stream = sd.RawOutputStream(
-            samplerate=RECEIVE_SAMPLE_RATE,
-            channels=CHANNELS,
-            dtype="int16",
-            blocksize=CHUNK_SIZE,
-        )
-        stream.start()
-
+        Playback itself happens on the engine's audio thread; this only watches it.
+        """
+        print("[JARVIS] 🔊 Playback via AudioEngine")
+        speaking = False
         try:
             while True:
-                audio_in_queue = self.audio_in_queue
-                if not audio_in_queue:
-                    await asyncio.sleep(0.1)
-                    continue
-                try:
-                    chunk = await asyncio.wait_for(
-                        audio_in_queue.get(),
-                        timeout=0.1
-                    )
-                except asyncio.TimeoutError:
-                    if (
-                        self._turn_done_event
-                        and self._turn_done_event.is_set()
-                        and audio_in_queue.empty()
-                    ):
-                        self.set_speaking(False)
-                        self._turn_done_event.clear()
-                    continue
-                self.set_speaking(True)
-                try:
-                    await asyncio.to_thread(stream.write, chunk)
-                except (RuntimeError, asyncio.CancelledError):
-                    break   # executor shutting down — exit cleanly
-        except Exception as e:
-            print(f"[JARVIS] ❌ Play: {e}")
-            raise
+                await asyncio.sleep(0.05)
+                playing = bool(self.audio and self.audio.is_playing)
+                if playing and not speaking and not self._interrupted:
+                    speaking = True
+                    self.set_speaking(True)
+                elif not playing and speaking:
+                    speaking = False
+                    self.set_speaking(False)
+                if (not playing and self._turn_done_event
+                        and self._turn_done_event.is_set()):
+                    self._turn_done_event.clear()
         finally:
             self.set_speaking(False)
-            stream.stop()
-            stream.close()
 
     # ── Morning briefing ────────────────────────────────────────────────────────
 
@@ -1366,6 +1335,25 @@ class JarvisLive:
         # Prepared here but NOT listening: it starts when you press Remote Control
         # and stops itself when no phone has used it for a while.
         self._bg_tasks: set[asyncio.Task] = set()
+
+        # Audio: one engine for the whole process (survives Gemini reconnects).
+        # If it can't start, JARVIS still runs text-only rather than crashing.
+        try:
+            self.audio = AudioEngine(
+                AudioSettings.from_dict(get_audio_settings()),
+                on_chunk=self._on_mic_chunk,
+                should_send=self._mic_allowed,
+            )
+            self.audio.start()
+            if hasattr(self.ui, "attach_audio"):
+                self.ui.attach_audio(self.audio)
+            for err in (self.audio.input_error, self.audio.output_error):
+                if err:
+                    self.ui.write_log(f"ERR: Audio — {err}")
+        except Exception as e:
+            print(f"[Audio] Engine failed to start: {e}")
+            traceback.print_exc()
+            self.ui.write_log(f"ERR: Audio engine failed to start — {e}")
         try:
             from dashboard.server import DashboardServer
             self._dashboard = DashboardServer()
@@ -1396,7 +1384,6 @@ class JarvisLive:
                     asyncio.TaskGroup() as tg,
                 ):
                     self.session          = session
-                    self.audio_in_queue   = asyncio.Queue()
                     self.out_queue        = asyncio.Queue(maxsize=200)
                     self._turn_done_event = asyncio.Event()
 
