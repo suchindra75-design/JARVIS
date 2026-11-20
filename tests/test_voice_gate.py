@@ -240,15 +240,31 @@ class VoiceGateTests(unittest.TestCase):
 
     def test_you_talking_straight_after_the_tv_is_caught(self):
         """TV speech, then you, with no pause in between."""
-        ident = FakeID(labels=["unknown", "unknown", "you"])
+        ident = FakeID(labels=["unknown", "unknown", "you", "you"])
         h = Harness(ident).run([(1.0, True)])          # TV: first check → unknown → rejected
         self.assertEqual(h.gate.state, "rejected")
-        h.run([(2.5, True), (1.0, False)])              # sound continues (now you) → rolling re-check
+        h.run([(3.0, True), (1.0, False)])              # sound continues (now you) → two matching re-checks
         self.assertEqual(h.kinds, ["start", "end"])
         sent_s = len(h.sent) / 2 / 16000
-        everything = VoiceGate.PREROLL_MS / 1000 + 3.5 + VoiceGate.END_SILENCE_MS / 1000
+        everything = VoiceGate.PREROLL_MS / 1000 + 4.0 + VoiceGate.END_SILENCE_MS / 1000
         self.assertLess(sent_s, everything - 0.7, "only the recent window, not the TV part, is forwarded")
         self.assertEqual([e.action for e in h.events], ["ignored", "accepted"])
+
+    def test_rolling_needs_two_matches_in_a_row(self):
+        ident = FakeID(labels=["unknown", "you", "unknown", "you", "unknown"], score=0.8)
+        h = Harness(ident).run([(4.0, True), (1.0, False)])
+        self.assertEqual(h.log, [], "isolated matches during other speech are not enough")
+
+    def test_recheck_just_over_threshold_is_not_enough(self):
+        # first check uncertain, re-check scrapes past 0.60 by 0.01 → still not accepted
+        class Seq(FakeID):
+            def verify(self, audio):
+                self.calls.append(len(audio))
+                sc = [0.5, 0.61, 0.61, 0.61][min(len(self.calls) - 1, 3)]
+                lab = "you" if sc >= 0.6 else "uncertain"
+                return Verdict(lab, sc, 0.6, len(audio) / 16000)
+        h = Harness(Seq()).run([(3.0, True), (1.0, False)])
+        self.assertEqual(h.log, [])
 
     def test_continuous_other_speech_never_gets_through_and_stays_quiet(self):
         ident = FakeID("unknown", 0.1)
@@ -269,3 +285,38 @@ class VoiceGateTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReplayWithRealModelTests(unittest.TestCase):
+    """The accuracy check's replay(), with the real speaker model and Mac voices."""
+
+    @classmethod
+    def setUpClass(cls):
+        import shutil
+        import tempfile
+        from audio.speaker_id import SpeakerIdentity
+        if not (shutil.which("say") and shutil.which("afconvert")):
+            raise unittest.SkipTest("needs macOS say/afconvert")
+        cls.tmp = tempfile.mkdtemp()
+        cls.sid = SpeakerIdentity(profile_path=Path(cls.tmp) / "p.npz")
+        if cls.sid.status == "no_model":
+            raise unittest.SkipTest("speaker model not downloaded")
+        from tests.test_speaker_id import tts
+        from audio.speaker_id import ENROL_PHRASES
+        cls.tts = staticmethod(tts)
+        cls.sid.enrol([tts(p, "Samantha") for p in ENROL_PHRASES])
+
+    @classmethod
+    def tearDownClass(cls):
+        import shutil
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def test_replay_decisions(self):
+        from audio.voice_gate import replay
+        me = replay(self.sid, self.tts("Open my calendar for tomorrow morning.", "Samantha"))
+        self.assertEqual((me.action, me.label), ("accepted", "you"), me)
+        for other in ("Daniel", "Fred", "Moira"):
+            ev = replay(self.sid, self.tts("Open my calendar for tomorrow morning.", other))
+            self.assertNotEqual(ev.action, "accepted", (other, ev))
+        quiet = replay(self.sid, np.zeros(16000 * 3, np.float32))
+        self.assertIsNone(quiet, "silence produces no decision at all")

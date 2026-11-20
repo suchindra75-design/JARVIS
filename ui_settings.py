@@ -547,10 +547,11 @@ class VoicePane(Pane):
         self.b_primary = button("Enrol my voice", "primary", 30)
         self.b_primary.clicked.connect(self._primary)
         self.b_test = button("Test recognition", "secondary", 30); self.b_test.clicked.connect(lambda: self._start("test"))
+        self.b_check = button("Accuracy check", "secondary", 30); self.b_check.clicked.connect(lambda: self._start("check"))
         self.b_add = button("Add samples", "secondary", 30); self.b_add.clicked.connect(lambda: self._start("add"))
         self.b_retrain = button("Retrain from scratch", "secondary", 30); self.b_retrain.clicked.connect(self._retrain)
         self.b_delete = button("Delete profile", "danger", 30); self.b_delete.clicked.connect(self._delete)
-        for b in (self.b_primary, self.b_test, self.b_add, self.b_retrain):
+        for b in (self.b_primary, self.b_test, self.b_check, self.b_add, self.b_retrain):
             al.addWidget(b)
         al.addStretch(); al.addWidget(self.b_delete)
         self.lay.addWidget(self.actions)
@@ -640,7 +641,7 @@ class VoicePane(Pane):
         self.b_primary.setText({"no_model": f"Download voice model ({MODEL_MB} MB)", "ready": "Enrol again"}.get(st, "Enrol my voice"))
         self.b_primary.setVisible(st in ("no_model", "not_enrolled"))
         self.b_primary.setEnabled(st in ("no_model", "not_enrolled") and self._mode is None)
-        for b in (self.b_test, self.b_add, self.b_retrain, self.b_delete):
+        for b in (self.b_test, self.b_check, self.b_add, self.b_retrain, self.b_delete):
             b.setVisible(ready)
             b.setEnabled(self._mode is None)
         if st == "unavailable":
@@ -718,6 +719,12 @@ class VoicePane(Pane):
                                                              "plan to do today."])
         # (instruction, phrase) per step; condition steps can be skipped
         self._howto = [""] * len(self._phrases)
+        if mode == "check":
+            from audio.voice_gate import CHECK_STEPS
+            self._steps = list(CHECK_STEPS)
+            self._phrases = [st[1] for st in self._steps]
+            self._howto = [st[2] for st in self._steps]
+            self._check_results = []
         if mode in ("enrol", "add"):
             for how, phrase in ENROL_CONDITIONS:
                 self._phrases.append(phrase); self._howto.append(how)
@@ -727,18 +734,23 @@ class VoicePane(Pane):
 
     def _show_step(self, msg: str = "", tone: str = ""):
         n = len(self._phrases)
-        title = {"enrol": "Enrolment", "add": "Add samples", "test": "Test recognition"}[self._mode]
+        title = {"enrol": "Enrolment", "add": "Add samples", "test": "Test recognition",
+                 "check": "Accuracy check"}[self._mode]
         self.rec_step.setText(f"{title} · {self._idx + 1} of {n}" if n > 1 else title)
-        self.rec_phrase.setText(f"“{self._phrases[self._idx]}”" if self._mode != "test" else self._phrases[0])
+        ph = self._phrases[self._idx]
+        self.rec_phrase.setText(ph if self._mode == "test" or (self._mode == "check" and not ph.endswith(("?", ".")))
+                                else f"“{ph}”")
         how = self._howto[self._idx] if self._idx < len(self._howto) else ""
         self.rec_msg.setText(msg + ("  " if msg else "") + how if how else
                              (msg or "Press Record, then read the phrase at a normal speaking volume."))
         self.rec_msg.setStyleSheet(f"color: {tone or C.TEXT_MED}; background: transparent;")
         self.rec_go.setEnabled(True); self.rec_go.setText("Record")
-        self.rec_skip.setVisible(bool(how))
+        self.rec_skip.setVisible(bool(how) or self._mode == "check")
 
     def _record(self):
         secs = 5.0 if self._mode != "test" else 4.0
+        if self._mode == "check":
+            secs = self._steps[self._idx][3]
         if not self.ctl.record_audio(secs, lambda x: self._recorded.emit(x)):
             self.rec_msg.setText("The microphone isn't available. Check Audio settings.")
             return
@@ -748,6 +760,16 @@ class VoicePane(Pane):
     def _on_recorded(self, audio):
         from audio.speaker_id import SpeakerIdentity
         x = np.asarray(audio, dtype=np.float32)
+        if self._mode == "check":
+            self.rec_msg.setText("Checking…")
+            step = self._steps[self._idx]
+            def work():
+                from audio.voice_gate import replay
+                from memory.config_manager import get_voice_gate
+                ev = replay(self.sid, x, threshold_offset=get_voice_gate()["strictness"])
+                self._job_done.emit("check", (step, ev))
+            threading.Thread(target=work, daemon=True).start()
+            return
         if self._mode == "test":
             self.rec_msg.setText("Checking…")
             def work():
@@ -770,6 +792,9 @@ class VoicePane(Pane):
         if self._idx < len(self._phrases):
             self._show_step(msg, C.GREEN)
             return
+        if self._mode == "check":
+            self._finish_check()
+            return
         self.rec_go.setEnabled(False); self.rec_msg.setText("Building your voice profile…")
         samples, append = list(self._samples), self._mode == "add"
         def work():
@@ -791,6 +816,20 @@ class VoicePane(Pane):
             else:
                 self.ctl.toast("Voice profile saved",
                                f"{result['samples']} samples · threshold {result['threshold']:.2f}", "ok")
+        elif kind == "check":
+            (key, _ph, _how, _secs, expect), ev = result
+            got_you = ev is not None and ev.action in ("accepted", "fallback")
+            self._check_results.append({"step": key, "expect": expect, "accepted": got_you,
+                                        "label": ev.label if ev else "nothing",
+                                        "score": None if (ev is None or ev.score is None) else round(ev.score, 3),
+                                        "speech_s": round(ev.speech_s, 2) if ev else 0.0})
+            ok = got_you == (expect == "you")
+            sc = f" · {ev.score:.2f}" if ev and ev.score is not None else ""
+            word = "Let through" if got_you else "Ignored"
+            self._next_step(f"{word}{sc} — {'as expected' if ok else 'not what it should do'}.")
+            if self._mode is None or self._idx >= len(self._phrases):
+                return
+            return
         elif kind == "test":
             self.sid.last = result
             self._mode = None; self.rec.hide()
@@ -798,6 +837,34 @@ class VoicePane(Pane):
                            "" if result.score is None else f"Score {result.score:.2f} (threshold {result.threshold:.2f})",
                            "ok" if result.label == "you" else "warn")
         self.refresh()
+
+    def _finish_check(self):
+        import json
+        from datetime import datetime
+        r = self._check_results
+        you = [x for x in r if x["expect"] == "you"]
+        oth = [x for x in r if x["expect"] == "other"]
+        missed = sum(not x["accepted"] for x in you)
+        let = sum(x["accepted"] for x in oth)
+        summary = (f"Recognised you {len(you) - missed} of {len(you)} times"
+                   + (f"; let through {let} of {len(oth)} recordings that weren't you." if oth else "."))
+        try:
+            path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "memory", "voice_gate_check.json")
+            old = []
+            if os.path.exists(path):
+                with open(path, encoding="utf-8") as f:
+                    old = json.load(f)
+            old.append({"time": datetime.now().isoformat(timespec="seconds"), "results": r})
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(old, f, indent=1)
+        except Exception as e:
+            print(f"[VoiceGate] couldn't save the check: {e}")
+        self._mode = None; self.rec.hide()
+        self.ctl.toast("Accuracy check done", summary, "ok" if missed == 0 and let == 0 else "warn")
+        self.detail_lbl.setText(summary)
+        self.refresh()
+        self.detail_lbl.setText(summary)
 
     def _cancel(self):
         self._mode = None; self.rec.hide(); self.refresh()

@@ -81,7 +81,11 @@ class VoiceGate:
     FOLLOW_UP_MIN_S = 0.3       # a "short reply" must have at least this much speech…
     SHORT_CHECK_S = 0.5         # …and from this much on it is checked by the model instead
     ROLL_WINDOW_S = 1.0         # while rejecting: re-check this much of the latest speech…
-    ROLL_STEP_S = 0.6           # …after every this much more of it
+    ROLL_STEP_S = 0.6           # …after every this much more of it…
+    ROLL_HITS = 2               # …and accept only after this many matches in a row
+    # Every extra check is another chance for a similar voice to scrape past the
+    # threshold, so a second or later check must clear it by this margin.
+    RECHECK_MARGIN = 0.03
 
     def __init__(self, identity, on_audio, on_activity, on_event=None, policy: str = "prefer",
                  follow_up_s: float = 20.0, threshold_offset: float = 0.0, open_early=None):
@@ -222,6 +226,9 @@ class VoiceGate:
                 (self._accept if self.policy == "prefer" else self._reject)(ev)
                 return
             ev = GateEvent("", v.label, v.score, v.threshold, v.speech_s, verify_ms=ms)
+            if (v.label == "you" and self._checked_at is not None and v.score is not None
+                    and v.threshold is not None and v.score < v.threshold + self.RECHECK_MARGIN):
+                v.label = ev.label = "uncertain"          # a re-check must clear the bar with room to spare
             if v.label == "you":
                 ev.action = "accepted"; self._accept(ev); return
             if v.label == "unknown":
@@ -267,7 +274,10 @@ class VoiceGate:
                 v, ms = fut.result()
             except Exception:
                 return
-            if v is not None and v.label == "you":
+            ok = (v is not None and v.label == "you" and v.score is not None and v.threshold is not None
+                  and v.score >= v.threshold + self.RECHECK_MARGIN)
+            self._roll_hits = self._roll_hits + 1 if ok else 0
+            if ok and self._roll_hits >= self.ROLL_HITS:
                 self._hold = list(self._recent)
                 self._speech_frames = int(self.ROLL_WINDOW_S * 1000 / FRAME_MS)
                 self._accept(GateEvent("accepted", "you", v.score, v.threshold, v.speech_s, verify_ms=ms))
@@ -325,6 +335,7 @@ class VoiceGate:
         else:
             self._state = "rejected"
             self._roll_frames = 0
+            self._roll_hits = 0
 
     def _end_turn(self) -> None:
         if self._out:
@@ -381,9 +392,54 @@ class VoiceGate:
         self._turn_t = 0.0
         self._checked_at: float | None = None
         self._roll_frames = 0
+        self._roll_hits = 0
         if hasattr(self, "_recent"):
             self._recent.clear()
         p = getattr(self, "_pending", None)
         if p is not None:
             p.cancel()
         self._pending = None
+
+
+CHECK_STEPS = [
+    ("normal", "Open my calendar for tomorrow.", "Say this normally.", 5.0, "you"),
+    ("normal", "What's the weather like this weekend?", "Say this normally.", 5.0, "you"),
+    ("normal", "Remind me to call home at seven.", "Say this normally.", 5.0, "you"),
+    ("normal", "Play some music I like.", "Say this a little faster than usual.", 5.0, "you"),
+    ("quiet", "Turn the volume down a bit.", "Say this quietly.", 5.0, "you"),
+    ("quiet", "What time is it?", "Say this quietly.", 5.0, "you"),
+    ("far", "How long is my drive to work?", "Press Record, then step about 3 metres away and say this.", 8.0, "you"),
+    ("far", "Search the web for cricket scores.", "From across the room again.", 8.0, "you"),
+    ("over_tv", "Pause the music please.", "Start a TV show or video with people talking, then say this over it.", 6.0, "you"),
+    ("over_tv", "Read me my last message.", "With the TV still on, say this.", 6.0, "you"),
+    ("tv_only", "Stay silent", "Keep the TV / video playing and say nothing.", 6.0, "other"),
+    ("tv_only", "Stay silent", "Again: TV only, say nothing.", 6.0, "other"),
+    ("music_only", "Stay silent", "Play music with singing, and say nothing.", 6.0, "other"),
+    ("other_person", "Open my calendar for tomorrow.", "Ask someone else to say this (or press Skip).", 5.0, "other"),
+    ("other_person", "What's the weather like this weekend?", "The other person again (or Skip).", 5.0, "other"),
+]
+
+
+def replay(identity, pcm: np.ndarray, **kw) -> GateEvent | None:
+    """Run a recording (float32 or int16, 16 kHz, already mic-processed) through
+    the gate exactly as live audio would go, and return its final decision.
+    Used by the accuracy check in Settings and by tools/gate_room_check.py."""
+    from audio.voice import VoiceConfig, VoiceProcessor
+    x = np.asarray(pcm)
+    if x.dtype != np.int16:
+        x = (np.clip(x.astype(np.float32), -1, 1) * 32767).astype(np.int16)
+    x = np.concatenate([x, np.zeros(RATE, np.int16)])           # trailing silence ends the turn
+    events = []
+    g = VoiceGate(identity, on_audio=lambda b: None, on_activity=lambda k: None, on_event=events.append, **kw)
+    det = VoiceProcessor(VoiceConfig(enabled=False))            # speech detection only
+    try:
+        for i in range(len(x) // 160):
+            f = x[i * 160:(i + 1) * 160]
+            det.process(f)
+            g.feed(f, det.speech, True)
+            if g._pending is not None:
+                g._pending.exception()                          # wait for the model, in order
+    finally:
+        g.close()
+    accepted = [e for e in events if e.action in ("accepted", "fallback")]
+    return accepted[0] if accepted else (events[-1] if events else None)

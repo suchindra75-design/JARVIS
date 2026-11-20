@@ -4,6 +4,7 @@ config/certs/
 memory/long_term.json
 memory/voice_profile*.npz
 memory/voice_gate_log.csv
+memory/voice_gate_check.json
 _backup_before_fixes_*/
 
 # Local environment and caches
