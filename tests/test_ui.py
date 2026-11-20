@@ -283,7 +283,8 @@ class StatusTests(UITestBase):
         self.assertTrue(self.j.muted)
         self.assertEqual(self.w.chip_mic.text(), "Muted")
         self.assertEqual(self.w.stage.visual_state, "muted")
-        self.assertEqual(self.w.chip_voice.text(), "Voice: not enrolled")
+        # "not set up" when the speaker model isn't downloaded (e.g. a fresh checkout), else "not enrolled"
+        self.assertIn(self.w.chip_voice.text(), ("Voice: not enrolled", "Voice: not set up"))
 
     def test_window_sizes(self):
         for wd, ht in ((820, 580), (1100, 700), (1440, 900)):
