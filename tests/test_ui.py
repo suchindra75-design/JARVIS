@@ -306,6 +306,7 @@ class VoiceIdentityFlowTests(UITestBase):
         self.assertEqual(vp.state_lbl.text(), "No voice profile yet")
         vp.b_primary.click()
         self.assertTrue(vp.rec.isVisible())
+        self.assertTrue(getattr(self.w, "_voice_setup", False), "phrases read aloud must not reach Gemini")
         for i, phrase in enumerate(ENROL_PHRASES):
             vp.rec_go.click()
             self.assertTrue(self.eng.mic_test_running)
@@ -322,6 +323,7 @@ class VoiceIdentityFlowTests(UITestBase):
             pump(50)
         self.assertTrue(wait_for(lambda: self.sid.status == "ready", 30), vp.rec_msg.text())
         pump(100)
+        self.assertFalse(self.w._voice_setup, "the mic goes back to Gemini after enrolment")
         self.assertEqual(vp.state_lbl.text(), "Profile ready")
         self.assertTrue(os.path.exists(self.sid.profile_path))
         # live recognition: an utterance being sent to Gemini is checked in the background

@@ -2575,6 +2575,9 @@ class MainWindow(QMainWindow):
         update_config({"voice_identity_display": self._show_speaker})
         self._refresh_voice_chip()
 
+    def set_voice_setup(self, active: bool) -> None:
+        self._voice_setup = bool(active)
+
     def record_audio(self, seconds: float, on_done) -> bool:
         return bool(self.audio and self.audio.capture(seconds, on_done))
 

@@ -44,6 +44,7 @@ class SettingsController:
     def show_speaker(self) -> bool: return True
     def set_show_speaker(self, on: bool) -> None: ...
     def record_audio(self, seconds: float, on_done) -> bool: return False
+    def set_voice_setup(self, active: bool) -> None: ...   # True while enrolling/testing: nothing goes to Gemini
     def remote_status(self) -> dict: return {}
     def open_pairing(self) -> None: ...
     def forget_phones(self) -> int: return 0
@@ -729,6 +730,7 @@ class VoicePane(Pane):
             for how, phrase in ENROL_CONDITIONS:
                 self._phrases.append(phrase); self._howto.append(how)
         self.rec.show()
+        self.ctl.set_voice_setup(True)          # phrases read aloud must not reach Gemini as commands
         self._show_step()
         self.refresh()
 
@@ -763,6 +765,15 @@ class VoicePane(Pane):
         if self._mode == "check":
             self.rec_msg.setText("Checking…")
             step = self._steps[self._idx]
+            keep = os.environ.get("JARVIS_KEEP_CHECK_AUDIO")    # measurement sessions only
+            if keep:
+                try:
+                    from audio.speaker_id import ROOT as _root
+                    d = _root / "tools" / "bench_out" / "voice_check"
+                    d.mkdir(parents=True, exist_ok=True)
+                    np.save(d / f"{int(time.time())}_{self._idx:02d}_{step[0]}_{step[4]}.npy", x)
+                except Exception as e:
+                    print(f"[VoiceGate] couldn't keep check audio: {e}")
             def work():
                 from audio.voice_gate import replay
                 from memory.config_manager import get_voice_gate
@@ -810,7 +821,7 @@ class VoicePane(Pane):
             if isinstance(result, Exception):
                 self.ctl.toast("Download failed", str(result), "bad")
         elif kind == "enrol":
-            self._mode = None; self.rec.hide()
+            self._mode = None; self.rec.hide(); self.ctl.set_voice_setup(False)
             if isinstance(result, Exception):
                 self.ctl.toast("Enrolment failed", str(result), "bad")
             else:
@@ -832,7 +843,7 @@ class VoicePane(Pane):
             return
         elif kind == "test":
             self.sid.last = result
-            self._mode = None; self.rec.hide()
+            self._mode = None; self.rec.hide(); self.ctl.set_voice_setup(False)
             self.ctl.toast(f"Recognition: {result.text}",
                            "" if result.score is None else f"Score {result.score:.2f} (threshold {result.threshold:.2f})",
                            "ok" if result.label == "you" else "warn")
@@ -860,14 +871,14 @@ class VoicePane(Pane):
                 json.dump(old, f, indent=1)
         except Exception as e:
             print(f"[VoiceGate] couldn't save the check: {e}")
-        self._mode = None; self.rec.hide()
+        self._mode = None; self.rec.hide(); self.ctl.set_voice_setup(False)
         self.ctl.toast("Accuracy check done", summary, "ok" if missed == 0 and let == 0 else "warn")
         self.detail_lbl.setText(summary)
         self.refresh()
         self.detail_lbl.setText(summary)
 
     def _cancel(self):
-        self._mode = None; self.rec.hide(); self.refresh()
+        self._mode = None; self.rec.hide(); self.ctl.set_voice_setup(False); self.refresh()
 
     def _retrain(self):
         self.sid.delete_profile()
@@ -885,6 +896,7 @@ class VoicePane(Pane):
 
     def stop(self):
         self._meter_t.stop()
+        self.ctl.set_voice_setup(False)         # Settings closed mid-enrolment
 
 
 # ── Remote ───────────────────────────────────────────────────────────────────

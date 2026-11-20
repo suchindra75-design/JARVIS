@@ -1009,8 +1009,11 @@ class JarvisLive:
     # and the Gemini session.
 
     def _mic_allowed(self) -> bool:
-        """Called on the audio thread: may the PC mic be sent to Gemini right now?"""
-        return not self.ui.muted and not self._phone_active
+        """Called on the audio thread: may the PC mic be sent to Gemini right now?
+        Not while muted, while the phone is talking, or while the user is reading
+        enrolment / test phrases in Settings (they'd be taken as commands)."""
+        return (not self.ui.muted and not self._phone_active
+                and not getattr(self.ui._win, "_voice_setup", False))
 
     def _on_mic_chunk(self, data: bytes) -> None:
         """Called on the audio thread with 20 ms of processed 16 kHz mic audio."""
