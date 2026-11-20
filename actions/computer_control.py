@@ -14,6 +14,7 @@ else:
 import time
 import random
 from pathlib import Path
+from memory.config_manager import get_text_model
 
 try:
     import pyautogui
@@ -336,7 +337,9 @@ def _screen_find(description: str) -> tuple[int, int] | None:
         )
 
         response = client.models.generate_content(
-            model="gemini-2.5-flash-lite",
+            # Not the lite model: it answers in 0-1000 normalised coordinates
+            # instead of the screen pixels asked for, which mis-clicks.
+            model=get_text_model(),
             contents=[
                 gtypes.Part.from_bytes(data=image_bytes, mime_type="image/png"),
                 prompt,

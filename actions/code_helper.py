@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 
 from actions.confirm import DECLINED, preview, request_confirmation
+from memory.config_manager import get_text_model
 
 # Actions that write files or execute code, and the title shown when asking.
 _APPROVAL_TITLES = {
@@ -27,7 +28,6 @@ BASE_DIR           = get_base_dir()
 API_CONFIG_PATH    = BASE_DIR / "config" / "api_keys.json"
 DESKTOP            = Path.home() / "Desktop"
 MAX_BUILD_ATTEMPTS = 3
-GEMINI_MODEL       = "gemini-2.5-flash"
 
 
 def _get_api_key() -> str:
@@ -35,7 +35,8 @@ def _get_api_key() -> str:
         return json.load(f)["gemini_api_key"]
 
 
-def _get_gemini(model: str = GEMINI_MODEL):
+def _get_gemini(model: str | None = None):
+    model = model or get_text_model()
     from google import genai
     _c = genai.Client(api_key=_get_api_key())
 
@@ -500,7 +501,7 @@ Be specific and actionable. If you see an error message, quote it exactly."""
         ]
 
         response = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model=get_text_model(),
             contents=contents,
         )
 
