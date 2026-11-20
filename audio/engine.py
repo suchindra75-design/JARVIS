@@ -140,6 +140,10 @@ class AudioEngine:
         self._speech_end_t: float | None = None
         self._was_playing = False
         self._mic_test: dict | None = None
+        self.on_utterance = None                             # fn(np.ndarray int16) — finished user speech
+        self._utt: list[np.ndarray] = []
+        self._utt_prev_speech = False
+        self._spec_buf: list[np.ndarray] = []
         self.round_trip_ms: float | None = None
         self._click: dict | None = None
         self._click_fire = False
@@ -362,6 +366,17 @@ class AudioEngine:
 
     # ── tests from the settings panel ────────────────────────────────────
 
+    def capture(self, seconds: float, on_done) -> bool:
+        """Record `seconds` of processed mic audio for local use (e.g. voice enrolment).
+
+        Nothing captured is sent to Gemini or played back. on_done(float32 array,
+        16 kHz) is called on the audio worker thread. Returns False if busy/no mic.
+        """
+        if self._mic_test is not None or self._in_stream is None:
+            return False
+        self._mic_test = {"frames": [], "need": int(seconds * 100), "on_done": on_done, "playback": False}
+        return True
+
     def start_mic_test(self, seconds: float = 5.0, on_done=None) -> None:
         """Record `seconds` of processed mic (not sent to Gemini), then play it back."""
         self._mic_test = {"frames": [], "need": int(seconds * 100), "on_done": on_done}
@@ -538,6 +553,7 @@ class AudioEngine:
     def _route_mic(self, out: np.ndarray, playing: bool) -> None:
         mic_db = self.voice.level_dbfs
         speech = self.voice.speech
+        self._update_mic_spectrum(out)
         # mic test: capture processed audio locally, never send it
         if self._mic_test is not None:
             t = self._mic_test
@@ -545,14 +561,15 @@ class AudioEngine:
             if len(t["frames"]) >= t["need"]:
                 self._mic_test = None
                 pcm16 = np.concatenate(t["frames"]).astype(np.float32) / 32768.0
-                import soxr
-                pcm24 = soxr.resample(pcm16, IN_RATE, OUT_RATE)
-                self.play((np.clip(pcm24, -1, 1) * 32767).astype(np.int16).tobytes())
+                if t.get("playback", True):
+                    import soxr
+                    pcm24 = soxr.resample(pcm16, IN_RATE, OUT_RATE)
+                    self.play((np.clip(pcm24, -1, 1) * 32767).astype(np.int16).tobytes())
                 if t["on_done"]:
                     try:
-                        t["on_done"]()
-                    except Exception:
-                        pass
+                        t["on_done"](pcm16) if not t.get("playback", True) else t["on_done"]()
+                    except Exception as e:
+                        print(f"[Audio] capture callback failed: {e}")
             self._levels = {**self._levels, "mic_db": mic_db, "speech": speech, "sending": False}
             return
 
@@ -573,6 +590,7 @@ class AudioEngine:
         self._was_playing = playing
 
         self._levels = {**self._levels, "mic_db": mic_db, "speech": speech, "sending": sending}
+        self._collect_utterance(out, speech, sending)
         if not sending:
             self._send_buf.clear()
             return
@@ -584,6 +602,48 @@ class AudioEngine:
                 self.on_chunk(data)
             except Exception:
                 pass
+
+    UTTERANCE_MIN_S = 1.0
+    UTTERANCE_MAX_S = 10.0
+
+    def _collect_utterance(self, out: np.ndarray, speech: bool, sending: bool) -> None:
+        """Hand each finished stretch of the user's speech to on_utterance (speaker check).
+
+        Only audio that is actually being sent to Gemini counts, so mic tests,
+        muted time and JARVIS's own voice are never checked.
+        """
+        if self.on_utterance is None:
+            return
+        if sending and speech:
+            self._utt.append(out.copy())
+        ended = self._utt and ((self._utt_prev_speech and not speech) or not sending
+                               or len(self._utt) >= self.UTTERANCE_MAX_S * 100)
+        self._utt_prev_speech = speech and sending
+        if ended:
+            frames, self._utt = self._utt, []
+            if len(frames) >= self.UTTERANCE_MIN_S * 100:
+                try:
+                    self.on_utterance(np.concatenate(frames))
+                except Exception as e:
+                    print(f"[Audio] utterance callback failed: {e}")
+
+    def _update_mic_spectrum(self, out: np.ndarray) -> None:
+        """24-band mic spectrum every 20 ms for the voice ribbon (cheap: one 320-point FFT)."""
+        self._spec_buf.append(out)
+        if len(self._spec_buf) < 2:
+            return
+        x = np.concatenate(self._spec_buf).astype(np.float32) / 32768.0
+        self._spec_buf.clear()
+        prev = self._levels.get("mic_spectrum") or [0.0] * SPECTRUM_BANDS
+        if float(np.max(np.abs(x))) < 1e-4:
+            spec = [0.85 * o for o in prev]
+        else:
+            mag = np.abs(np.fft.rfft(x * np.hanning(len(x))))
+            edges = np.geomspace(2, len(mag) - 1, SPECTRUM_BANDS + 1).astype(int)
+            bands = [float(np.mean(mag[edges[i]:max(edges[i] + 1, edges[i + 1])])) for i in range(SPECTRUM_BANDS)]
+            new = [min(1.0, max(0.0, (20 * math.log10(b + 1e-9) + 30) / 45)) for b in bands]
+            spec = [max(n, 0.85 * o) for n, o in zip(new, prev)]
+        self._levels = {**self._levels, "mic_spectrum": spec}
 
     def _update_out_meter(self, blk: np.ndarray) -> None:
         rms = float(np.sqrt(np.mean(blk * blk))) if len(blk) else 0.0

@@ -129,8 +129,8 @@ class FakeStream:
         self.active = False
 
 
-class EngineTests(unittest.TestCase):
-    """Drive the engine's callbacks by hand; the DSP worker thread runs for real."""
+class _EngineBase(unittest.TestCase):
+    """Helpers to drive the engine's callbacks by hand; the DSP worker thread runs for real."""
 
     def make(self, **settings):
         chunks = []
@@ -170,6 +170,8 @@ class EngineTests(unittest.TestCase):
             time.sleep(0.01)
         return False
 
+
+class EngineTests(_EngineBase):
     def test_mic_chunks_are_20ms(self):
         eng, chunks, _, _ = self.make()
         self.feed_mic(eng, 0.5)
@@ -250,6 +252,49 @@ class EngineTests(unittest.TestCase):
         self.assertTrue(done.wait(2))
         self.assertTrue(self.wait(lambda: eng._play_samples > 0 or eng._raw_out_samples > 0))
         self.assertLessEqual(len(chunks), 5)        # only frames after the test ended
+
+
+class EngineHookTests(_EngineBase):
+    """capture() for voice enrolment and the utterance tap for speaker checks."""
+
+    def test_capture_returns_audio_and_sends_nothing(self):
+        eng, chunks, _, _ = self.make()
+        got = {}
+        self.assertTrue(eng.capture(0.3, lambda a: got.setdefault("a", a)))
+        self.assertFalse(eng.capture(0.3, lambda a: None), "second capture while busy must be refused")
+        self.feed_mic(eng, 0.5)
+        self.assertTrue(self.wait(lambda: "a" in got))
+        self.assertEqual(got["a"].dtype, np.float32)
+        self.assertEqual(len(got["a"]), 30 * IN_FRAME)
+        self.assertLessEqual(len(chunks), 10)               # only frames after the capture ended
+        self.assertEqual(eng._play_samples + eng._raw_out_samples, 0, "capture must not play back")
+
+    def test_utterances_only_from_audio_sent_to_gemini(self):
+        eng, chunks, allowed, _ = self.make()
+        utts = []
+        eng.on_utterance = utts.append
+        eng.voice._detect = lambda x: True                # treat everything as speech
+        eng.voice.speech = True
+        allowed["v"] = False                              # muted: nothing is sent → nothing checked
+        self.feed_mic(eng, 1.5)
+        time.sleep(0.2)
+        self.assertEqual(utts, [])
+        allowed["v"] = True
+        x = (tone(250, 1.5, 16000, 0.05) * 32767).astype(np.int16).reshape(-1, 1)
+        for i in range(0, len(x) - IN_FRAME + 1, IN_FRAME):   # paced like a real device (4× real time)
+            eng._in_cb(x[i:i + IN_FRAME], IN_FRAME, None, None)
+            if (i // IN_FRAME) % 10 == 9:
+                time.sleep(0.025)
+        time.sleep(0.1)
+        allowed["v"] = False                              # stop sending → utterance ends
+        self.feed_mic(eng, 0.1)
+        self.assertTrue(self.wait(lambda: len(utts) == 1))
+        self.assertGreaterEqual(len(utts[0]), 100 * IN_FRAME)
+
+    def test_mic_spectrum_in_levels(self):
+        eng, _, _, _ = self.make()
+        self.feed_mic(eng, 0.3, amp=0.2)
+        self.assertTrue(self.wait(lambda: len(eng.levels().get("mic_spectrum") or []) == 24))
 
 
 class SettingsTests(unittest.TestCase):

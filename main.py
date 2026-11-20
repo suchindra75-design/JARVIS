@@ -581,6 +581,17 @@ TOOL_DECLARATIONS = [
 # --- Plugin system ---
 
 
+def _tool_detail(name: str, args: dict) -> str:
+    """One short phrase describing a tool call, for the conversation and the stage caption."""
+    for k in ("query", "app_name", "receiver", "game_name", "city", "url", "description", "task",
+              "file_path", "path", "destination", "action"):
+        v = args.get(k)
+        if isinstance(v, str) and v.strip():
+            v = v.strip().replace("\n", " ")
+            return (v[:60] + "…") if len(v) > 60 else v
+    return ""
+
+
 class JarvisLive:
 
     def __init__(self, ui: JarvisUI):
@@ -588,6 +599,7 @@ class JarvisLive:
         self._asst_name     = "JARVIS"   # updated each session from config
         self.session: "AsyncSession | None" = None
         self.audio: "AudioEngine | None" = None     # created in run()
+        self.speaker_id = None                       # SpeakerIdentity, created in run()
         self.out_queue: "asyncio.Queue | None" = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._is_speaking         = False
@@ -745,8 +757,13 @@ class JarvisLive:
 
         print(f"[JARVIS] 🔧 {name}  {args}")
         self.ui.set_state("THINKING")
+        call_id = str(getattr(fc, "id", "") or f"{name}-{time.monotonic_ns()}")
+        if hasattr(self.ui, "tool_event"):
+            self.ui.tool_event(call_id, name, "started", _tool_detail(name, args))
 
         if name == "save_memory":
+            if hasattr(self.ui, "tool_event"):
+                self.ui.tool_event(call_id, name, "done")
             category = args.get("category", "notes")
             key      = args.get("key", "")
             value    = args.get("value", "")
@@ -767,11 +784,15 @@ class JarvisLive:
         approval = _approval_needed(name, args)
         if approval:
             title, detail = approval
+            if hasattr(self.ui, "tool_event"):
+                self.ui.tool_event(call_id, name, "approval")
             approved = await loop.run_in_executor(
                 None, lambda: request_confirmation(self.ui, title, detail)
             )
             if not approved:
                 print(f"[JARVIS] 🚫 {name} declined by user")
+                if hasattr(self.ui, "tool_event"):
+                    self.ui.tool_event(call_id, name, "declined")
                 if not self.ui.muted:
                     self.ui.set_state("LISTENING")
                 return types.FunctionResponse(
@@ -909,6 +930,11 @@ class JarvisLive:
             traceback.print_exc()
             self.speak_error(name, e)
 
+        if hasattr(self.ui, "tool_event"):
+            failed = result.startswith(f"Tool '{name}' failed") or result == DECLINED
+            self.ui.tool_event(call_id, name, "failed" if failed else "done",
+                               result[:200] if failed else "")
+
         if not self.ui.muted:
             self.ui.set_state("LISTENING")
 
@@ -995,6 +1021,8 @@ class JarvisLive:
                             txt = _clean_transcript(sc.output_transcription.text)
                             if txt and txt != (out_buf[-1] if out_buf else ""):
                                 out_buf.append(txt)
+                                if hasattr(self.ui, "set_speaking_text"):
+                                    self.ui.set_speaking_text(" ".join(out_buf))
 
                         if sc.input_transcription and sc.input_transcription.text:
                             txt = _clean_transcript(sc.input_transcription.text)
@@ -1016,7 +1044,10 @@ class JarvisLive:
 
                             full_in = " ".join(in_buf).strip()
                             if full_in:
-                                self.ui.write_log(f"You: {full_in}")
+                                if hasattr(self.ui, "add_message"):
+                                    self.ui.add_message("user", full_in, "voice")
+                                else:
+                                    self.ui.write_log(f"You: {full_in}")
                                 if self._dashboard:
                                     asyncio.create_task(self._dashboard.broadcast({
                                         "type": "log", "speaker": "user",
@@ -1027,7 +1058,10 @@ class JarvisLive:
 
                             full_out = " ".join(out_buf).strip()
                             if full_out:
-                                self.ui.write_log(f"{self._asst_name}: {full_out}")
+                                if hasattr(self.ui, "add_message"):
+                                    self.ui.add_message("assistant", full_out)
+                                else:
+                                    self.ui.write_log(f"{self._asst_name}: {full_out}")
                                 if self._dashboard:
                                     asyncio.create_task(self._dashboard.broadcast({
                                         "type": "log", "speaker": "jarvis",
@@ -1293,6 +1327,49 @@ class JarvisLive:
         self.ui.write_log("SYS: Phone connected via Remote Dashboard.")
         self.ui.notify_phone_connected()
 
+    # ── voice identity + remote status (UI support) ────────────────────────
+
+    def _on_utterance(self, pcm) -> None:
+        """Audio thread: a finished stretch of the user's speech. Check who it was, off-thread."""
+        sid = getattr(self, "speaker_id", None)
+        if sid is None or sid.status != "ready":
+            return
+        if not getattr(self.ui._win, "_show_speaker", True):
+            return
+        sid.submit(pcm, lambda v: self.ui.set_speaker(v.label, v.score))
+
+    def _remote_status(self) -> dict:
+        d = self._dashboard
+        if d is None:
+            return {"available": False, "reason": "The phone dashboard isn't available (fastapi/uvicorn missing)."}
+        return {"available": True, "running": d.running, "phones": len(d._clients),
+                "remembered": len(d._device_sessions), "url": d.get_url() if d.running else ""}
+
+    def _forget_phones(self) -> int:
+        d = self._dashboard
+        if d is None:
+            return 0
+        n = len(d._device_sessions)
+        d._device_sessions.clear()
+        return n
+
+    def _stop_remote(self) -> None:
+        d = self._dashboard
+        if d is not None and self._loop is not None:
+            asyncio.run_coroutine_threadsafe(d.stop("turned off from Settings"), self._loop)
+
+    async def _watch_remote(self) -> None:
+        last = None
+        while True:
+            await asyncio.sleep(2)
+            d = self._dashboard
+            if d is None:
+                continue
+            cur = (d.running, len(d._clients))
+            if cur != last:
+                last = cur
+                self.ui.update_remote(*cur)
+
     # ── dashboard command relay ─────────────────────────────────────────────
 
     async def _process_dashboard_commands(self) -> None:
@@ -1354,6 +1431,18 @@ class JarvisLive:
             print(f"[Audio] Engine failed to start: {e}")
             traceback.print_exc()
             self.ui.write_log(f"ERR: Audio engine failed to start — {e}")
+        # Voice identity (display only): check each finished utterance in the background.
+        try:
+            from audio.speaker_id import SpeakerIdentity
+            self.speaker_id = SpeakerIdentity()
+            if hasattr(self.ui, "attach_speaker_id"):
+                self.ui.attach_speaker_id(self.speaker_id)
+            if self.audio:
+                self.audio.on_utterance = self._on_utterance
+        except Exception as e:
+            print(f"[SpeakerID] Disabled: {e}")
+            self.speaker_id = None
+
         try:
             from dashboard.server import DashboardServer
             self._dashboard = DashboardServer()
@@ -1363,6 +1452,11 @@ class JarvisLive:
             t = asyncio.create_task(self._process_dashboard_commands())
             self._bg_tasks.add(t)
             t.add_done_callback(self._bg_tasks.discard)
+            if hasattr(self.ui, "set_remote_providers"):
+                self.ui.set_remote_providers(self._remote_status, self._forget_phones, self._stop_remote)
+                t2 = asyncio.create_task(self._watch_remote())
+                self._bg_tasks.add(t2)
+                t2.add_done_callback(self._bg_tasks.discard)
         except Exception as e:
             print(f"[Dashboard] Disabled: {e}")
             self._dashboard = None
@@ -1370,6 +1464,8 @@ class JarvisLive:
         while True:
             try:
                 print("[JARVIS] Connecting...")
+                if hasattr(self.ui, "set_connection"):
+                    self.ui.set_connection("connecting")
                 self.ui.set_state("THINKING")
                 config = self._build_config()
 
@@ -1396,6 +1492,8 @@ class JarvisLive:
                     self._interrupted          = False
 
                     print("[JARVIS] Connected.")
+                    if hasattr(self.ui, "set_connection"):
+                        self.ui.set_connection("connected")
                     self.ui.set_state("LISTENING")
                     self.ui.write_log("SYS: JARVIS online.")
 
@@ -1433,6 +1531,8 @@ class JarvisLive:
                 # Invalid API key — stop hammering the API, prompt re-configuration
                 if "API key not valid" in err_str or "1007" in err_str:
                     self.ui.write_log("ERR: API key invalid — please re-enter your key.")
+                    if hasattr(self.ui, "set_connection"):
+                        self.ui.set_connection("offline", "Your Gemini API key was rejected. Enter a new key.")
                     self.ui.set_state("SLEEPING")
                     self.ui.prompt_reconfig()
                     while not self.ui._win._ready:
@@ -1450,9 +1550,11 @@ class JarvisLive:
                     _conn_backoff = min(getattr(self, "_conn_backoff", 3) * 2, 60)
                     self._conn_backoff = _conn_backoff
                     self.ui.write_log(
-                        f"NET: Bağlantı kurulamadı — {_conn_backoff}s sonra tekrar deneniyor. "
-                        "(VPN gerekiyor olabilir)"
+                        f"SYS: Can't reach Gemini — retrying in {_conn_backoff} s. "
+                        "Check your internet connection (a VPN may be needed in some regions)."
                     )
+                    if hasattr(self.ui, "set_connection"):
+                        self.ui.set_connection("reconnecting", f"Can't reach Gemini — retrying in {_conn_backoff} s.")
                 else:
                     self._conn_backoff = 3
             finally:
