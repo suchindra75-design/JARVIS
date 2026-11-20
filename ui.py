@@ -447,9 +447,14 @@ class HudCanvas(QWidget):
         self._face_px: QPixmap | None = None
         self._load_face(face_path)
 
+        self._static: QPixmap | None = None      # cached background + instrument ring
+        self._static_key = None
+        self._font_name = None
+        self._font_label = UIFont(10, QFont.Weight.DemiBold, spacing=2.5)
+
         self._tmr = QTimer(self)
         self._tmr.timeout.connect(self._step)
-        self._tmr.start(16)
+        self._tmr.start(33)                       # 30 fps is plenty for this calm motion
 
     def _load_face(self, path: str):
         try:
@@ -514,6 +519,34 @@ class HudCanvas(QWidget):
         )
         self.update()
 
+    def _static_layer(self, W, H, cx, cy, fw, R, ring_r) -> QPixmap:
+        """Background and instrument ring never change between frames: draw once."""
+        key = (W, H, self.devicePixelRatioF(), C.BG, C.PANEL, C.BORDER, C.TEXT_DIM)
+        if self._static is not None and self._static_key == key:
+            return self._static
+        dpr = self.devicePixelRatioF()
+        px = QPixmap(int(W * dpr), int(H * dpr))
+        px.setDevicePixelRatio(dpr)
+        q = QPainter(px)
+        q.setRenderHint(QPainter.RenderHint.Antialiasing)
+        q.fillRect(QRectF(0, 0, W, H), qcol(C.BG))
+        bgg = QRadialGradient(QPointF(cx, cy), fw * 0.75)
+        bgg.setColorAt(0.0, qcol(C.PANEL, 255))
+        bgg.setColorAt(1.0, qcol(C.BG, 0))
+        q.setPen(Qt.PenStyle.NoPen); q.setBrush(QBrush(bgg))
+        q.drawEllipse(QPointF(cx, cy), fw * 0.75, fw * 0.75)
+        q.setPen(QPen(qcol(C.BORDER), 1)); q.setBrush(Qt.BrushStyle.NoBrush)
+        q.drawEllipse(QPointF(cx, cy), ring_r, ring_r)
+        for deg in range(0, 360, 6):                       # fine ticks every 6°, longer every 30°
+            rad = math.radians(deg)
+            ln = 7 if deg % 30 == 0 else 3
+            q.setPen(QPen(qcol(C.TEXT_DIM, 150 if deg % 30 == 0 else 70), 1))
+            q.drawLine(QPointF(cx + ring_r * math.cos(rad), cy - ring_r * math.sin(rad)),
+                       QPointF(cx + (ring_r - ln) * math.cos(rad), cy - (ring_r - ln) * math.sin(rad)))
+        q.end()
+        self._static, self._static_key = px, key
+        return px
+
     def paintEvent(self, _):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -525,28 +558,9 @@ class HudCanvas(QWidget):
         t = time.monotonic() - self._t0
         still = reduce_motion()
 
-        # background: graphite with a faint central lift
-        p.fillRect(self.rect(), qcol(C.BG))
-        bgg = QRadialGradient(QPointF(cx, cy), fw * 0.75)
-        bgg.setColorAt(0.0, qcol(C.PANEL, 255))
-        bgg.setColorAt(1.0, qcol(C.BG, 0))
-        p.setPen(Qt.PenStyle.NoPen); p.setBrush(QBrush(bgg))
-        p.drawEllipse(QPointF(cx, cy), fw * 0.75, fw * 0.75)
-
         R = fw * 0.20                                   # orb radius
-
-        # instrument ring: fine ticks every 6°, longer every 30°
         ring_r = R * 1.95
-        p.setPen(QPen(qcol(C.BORDER), 1))
-        p.setBrush(Qt.BrushStyle.NoBrush)
-        p.drawEllipse(QPointF(cx, cy), ring_r, ring_r)
-        for deg in range(0, 360, 6):
-            rad = math.radians(deg)
-            ln = 7 if deg % 30 == 0 else 3
-            a = 150 if deg % 30 == 0 else 70
-            p.setPen(QPen(qcol(C.TEXT_DIM, a), 1))
-            p.drawLine(QPointF(cx + ring_r * math.cos(rad), cy - ring_r * math.sin(rad)),
-                       QPointF(cx + (ring_r - ln) * math.cos(rad), cy - (ring_r - ln) * math.sin(rad)))
+        p.drawPixmap(0, 0, self._static_layer(W, H, cx, cy, fw, R, ring_r))
 
         # state layer
         if st == "SPEAKING":
@@ -601,7 +615,10 @@ class HudCanvas(QWidget):
             p.setOpacity(1.0)
         else:
             p.setPen(QPen(qcol(C.TEXT if st != "MUTED" else C.TEXT_DIM), 1))
-            p.setFont(UIFont(max(11, R * 0.16), QFont.Weight.DemiBold, spacing=R * 0.03))
+            fkey = round(R)
+            if self._font_name is None or self._font_name[0] != fkey:
+                self._font_name = (fkey, UIFont(max(11, R * 0.16), QFont.Weight.DemiBold, spacing=R * 0.03))
+            p.setFont(self._font_name[1])
             p.drawText(QRectF(cx - R, cy - R * 0.2, R * 2, R * 0.4),
                        Qt.AlignmentFlag.AlignCenter, self._assistant_name.upper())
         if st == "MUTED":
@@ -614,7 +631,7 @@ class HudCanvas(QWidget):
                   "PROCESSING": "Processing", "MUTED": "Muted", "SLEEPING": "Reconnecting",
                   "INITIALISING": "Starting"}
         sy = cy + ring_r + 22
-        p.setFont(UIFont(10, QFont.Weight.DemiBold, spacing=2.5))
+        p.setFont(self._font_label)
         p.setPen(QPen(col, 1))
         p.drawText(QRectF(0, sy, W, 20), Qt.AlignmentFlag.AlignCenter,
                    labels.get(st, st.title()).upper())
