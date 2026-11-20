@@ -58,7 +58,7 @@ from actions.game_updater      import game_updater
 from actions.system_monitor    import SystemMonitor, get_system_status
 from actions.proactive         import ProactiveEngine
 from actions.web_search        import _news as _fetch_news_sync
-from memory.config_manager     import get_brief_enabled, get_audio_settings
+from memory.config_manager     import get_brief_enabled, get_audio_settings, get_voice_name, get_speaking_style
 from audio.engine              import AudioEngine, AudioSettings
 from actions.confirm           import DECLINED, preview, request_confirmation
 
@@ -731,6 +731,13 @@ class JarvisLive:
         )
 
         parts = [time_ctx, identity_ctx]
+        _style = get_speaking_style()
+        if _style:
+            parts.append(
+                "[VOICE & TONE — overrides any tone guidance further down]\n"
+                f"{_style}\n"
+                "Always speak clearly and at a relaxed pace, finishing each word.\n\n"
+            )
         if mem_str:
             parts.append(mem_str)
         parts.append(sys_prompt)
@@ -745,7 +752,7 @@ class JarvisLive:
             speech_config=types.SpeechConfig(
                 voice_config=types.VoiceConfig(
                     prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                        voice_name="Charon"
+                        voice_name=get_voice_name()
                     )
                 )
             ),
@@ -997,6 +1004,23 @@ class JarvisLive:
                     await asyncio.sleep(0.1)
                     continue
 
+                def _post_user_turn():
+                    """Show what the user said in the conversation and on the phone."""
+                    full = " ".join(in_buf).strip()
+                    in_buf.clear()
+                    if not full:
+                        return
+                    if hasattr(self.ui, "add_message"):
+                        self.ui.add_message("user", full, "voice")
+                    else:
+                        self.ui.write_log(f"You: {full}")
+                    if self._dashboard:
+                        asyncio.create_task(self._dashboard.broadcast({
+                            "type": "log", "speaker": "user",
+                            "text": full,
+                            "ts": datetime.now().isoformat(),
+                        }))
+
                 async for response in session.receive():
 
                     if response.data:
@@ -1005,6 +1029,8 @@ class JarvisLive:
                         else:
                             if self._turn_done_event and self._turn_done_event.is_set():
                                 self._turn_done_event.clear()
+                            if in_buf:
+                                _post_user_turn()              # reply started: show what was heard now
                             if self.audio:
                                 self.audio.play(response.data)     # non-blocking
 
@@ -1020,6 +1046,8 @@ class JarvisLive:
                         if sc.output_transcription and sc.output_transcription.text:
                             txt = _clean_transcript(sc.output_transcription.text)
                             if txt and txt != (out_buf[-1] if out_buf else ""):
+                                if in_buf:
+                                    _post_user_turn()
                                 out_buf.append(txt)
                                 if hasattr(self.ui, "set_speaking_text"):
                                     self.ui.set_speaking_text(" ".join(out_buf))
@@ -1029,6 +1057,8 @@ class JarvisLive:
                             if txt:
                                 in_buf.append(txt)
                                 self._last_user_speech = time.monotonic()
+                                if hasattr(self.ui, "set_hearing_text"):
+                                    self.ui.set_hearing_text(" ".join(in_buf))
 
                         if sc.turn_complete:
                             if self._turn_done_event:
@@ -1042,19 +1072,7 @@ class JarvisLive:
                                 out_buf = []
                                 continue
 
-                            full_in = " ".join(in_buf).strip()
-                            if full_in:
-                                if hasattr(self.ui, "add_message"):
-                                    self.ui.add_message("user", full_in, "voice")
-                                else:
-                                    self.ui.write_log(f"You: {full_in}")
-                                if self._dashboard:
-                                    asyncio.create_task(self._dashboard.broadcast({
-                                        "type": "log", "speaker": "user",
-                                        "text": full_in,
-                                        "ts": datetime.now().isoformat(),
-                                    }))
-                            in_buf = []
+                            _post_user_turn()
 
                             full_out = " ".join(out_buf).strip()
                             if full_out:

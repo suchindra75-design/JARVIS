@@ -108,6 +108,42 @@ def get_text_model(lite: bool = False) -> str:
     return value.strip() if isinstance(value, str) and value.strip() else default
 
 
+# Gemini Live prebuilt voices: (id, voice, description). The voice is fixed
+# when a session connects, so a change takes effect on the next start.
+VOICES = [
+    ("Kore", "female", "firm"),        ("Aoede", "female", "breezy"),
+    ("Zephyr", "female", "bright"),    ("Leda", "female", "youthful"),
+    ("Despina", "female", "smooth"),   ("Sulafat", "female", "warm"),
+    ("Achernar", "female", "soft"),    ("Vindemiatrix", "female", "gentle"),
+    ("Gacrux", "female", "mature"),    ("Erinome", "female", "clear"),
+    ("Charon", "male", "informative"), ("Puck", "male", "upbeat"),
+    ("Orus", "male", "firm"),          ("Fenrir", "male", "excitable"),
+    ("Iapetus", "male", "clear"),      ("Algieba", "male", "smooth"),
+]
+DEFAULT_VOICE = "Charon"
+
+
+def get_voice_name() -> str:
+    v = load_api_keys().get("voice_name")
+    return v if isinstance(v, str) and v in {n for n, _, _ in VOICES} else DEFAULT_VOICE
+
+
+def save_voice_name(name: str) -> None:
+    if name not in {n for n, _, _ in VOICES}:
+        raise ValueError(f"Unknown voice: {name}")
+    update_config({"voice_name": name})
+
+
+def get_speaking_style() -> str:
+    """Free-text delivery instructions (tone, pace). Empty = the prompt's default."""
+    v = load_api_keys().get("speaking_style", "")
+    return v.strip()[:400] if isinstance(v, str) else ""
+
+
+def save_speaking_style(style: str) -> None:
+    update_config({"speaking_style": (style or "").strip()[:400]})
+
+
 def get_brief_enabled() -> bool:
     return load_api_keys().get("morning_brief_enabled", True)
 

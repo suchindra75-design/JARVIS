@@ -1308,6 +1308,7 @@ class MainWindow(QMainWindow):
     _speaker_sig    = pyqtSignal(str, object)         # verdict label, score
     _toast_sig      = pyqtSignal(str, str, str)       # title, body, tone
     _caption_sig    = pyqtSignal(str)                 # reply text while speaking
+    _hearing_sig    = pyqtSignal(str)                 # live transcript of the user
     _remote_sig     = pyqtSignal(bool, int)           # dashboard running, phones
 
     def __init__(self, face_path: str):
@@ -1440,6 +1441,7 @@ class MainWindow(QMainWindow):
         self._speaker_sig.connect(self._on_speaker)
         self._toast_sig.connect(lambda t, b, tone: self.toasts.show_toast(t, b, tone))
         self._caption_sig.connect(self.stage.set_speaking_text)
+        self._hearing_sig.connect(self.stage.set_hearing_text)
         self._cam_stop = threading.Event()
 
         # Camera preview overlay (child of central widget, positioned in resizeEvent)
@@ -2695,6 +2697,9 @@ class JarvisUI:
 
     def set_speaking_text(self, text: str) -> None:
         self._win._caption_sig.emit(text[-220:])
+
+    def set_hearing_text(self, text: str) -> None:
+        self._win._hearing_sig.emit(text[-220:])
 
     def set_remote_providers(self, status_fn, forget_fn, stop_fn) -> None:
         self._win.on_remote_status = status_fn

@@ -170,6 +170,20 @@ class GeneralPane(Pane):
         self.control("Assistant name", "Shown in the window and used by the assistant to refer to itself.", self.name)
         self.user = _field(cfg.get("user_name") or "", "Leave blank for “sir”")
         self.control("What it calls you", "Leave blank to be addressed as “sir”.", self.user)
+        from memory.config_manager import VOICES, get_voice_name
+        self.voice = _combo()
+        for vid, sex, desc in VOICES:
+            self.voice.addItem(f"{vid} — {sex}, {desc}", vid)
+        self.voice.setCurrentIndex(max(0, self.voice.findData(get_voice_name())))
+        self.voice.activated.connect(self._set_voice)
+        self.control("Voice", "Gemini voice the assistant speaks with. Takes effect the next time it starts.",
+                     self.voice)
+        from memory.config_manager import get_speaking_style
+        self.style = _field(get_speaking_style(), "e.g. warm, soft and calm; speak slowly")
+        self.style.setMaxLength(400)
+        self.style.editingFinished.connect(self._set_style)
+        self.control("Speaking style", "How it should sound: tone, mood, pace. Leave blank for the default "
+                     "Iron Man style. Takes effect the next time it starts.", self.style)
 
         self.section("Appearance")
         from ui import HueWheel                           # reuse the existing colour wheel
@@ -198,6 +212,23 @@ class GeneralPane(Pane):
         sc.clicked.connect(ctl.create_shortcut)
         self.control("Desktop shortcut", "Adds a launcher to your desktop.", sc)
         self.finish()
+
+    def _set_voice(self, _i: int):
+        from memory.config_manager import save_voice_name
+        vid = self.voice.currentData()
+        try:
+            save_voice_name(vid)
+            self.ctl.toast("Voice saved", f"{vid} will be used the next time the assistant starts.", "ok")
+        except Exception as e:
+            self.ctl.toast("Couldn't save voice", str(e), "bad")
+
+    def _set_style(self):
+        from memory.config_manager import get_speaking_style, save_speaking_style
+        txt = self.style.text().strip()
+        if txt == get_speaking_style():
+            return
+        save_speaking_style(txt)
+        self.ctl.toast("Speaking style saved", "Used the next time the assistant starts.", "ok")
 
     def _pick(self, hx: str):
         self._color = hx.lower()

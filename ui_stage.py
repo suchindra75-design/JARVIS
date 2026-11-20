@@ -224,6 +224,8 @@ class VoiceStage(QWidget):
         self._activity = ""
         self._error: tuple[str, str, str | None] | None = None
         self._speaking_caption = ""
+        self._hearing_caption = ""      # live transcript of the user
+        self._hearing_at = 0.0
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(28, 20, 28, 18)
@@ -280,6 +282,8 @@ class VoiceStage(QWidget):
             self.clear_error(only_connection=True)
         if state != "SPEAKING":
             self._speaking_caption = ""
+        else:
+            self._hearing_caption = ""
         if state == "LISTENING":
             self._activity = ""
         self._refresh()
@@ -297,6 +301,12 @@ class VoiceStage(QWidget):
 
     def set_speaking_text(self, text: str) -> None:
         self._speaking_caption = text
+        self._refresh()
+
+    def set_hearing_text(self, text: str) -> None:
+        """Live transcript of what the user is saying (shown until JARVIS answers)."""
+        self._hearing_caption = text
+        self._hearing_at = time.monotonic()
         self._refresh()
 
     def set_error(self, title: str, detail: str = "", action: str | None = "Open settings",
@@ -380,6 +390,10 @@ class VoiceStage(QWidget):
             cap = self._activity
         if st == "speaking" and self._speaking_caption:
             cap = self._speaking_caption
+        if (self._hearing_caption and st in ("listening", "ready", "processing")
+                and not (st == "processing" and self._activity)
+                and time.monotonic() - self._hearing_at < 6.0):
+            cap = f"“{self._hearing_caption}”"
         if self.title.text() != title:
             self.title.setText(title)
         if self.caption.text() != cap:
