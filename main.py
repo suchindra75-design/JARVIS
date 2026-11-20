@@ -604,6 +604,9 @@ def _tool_detail(name: str, args: dict) -> str:
     return ""
 
 
+KEEPALIVE_S = 30.0   # send a little silence after this long with nothing sent to Gemini
+
+
 class _GateReconnect(Exception):
     """Raised inside the session to reconnect with a different voice-gate mode."""
 
@@ -992,7 +995,14 @@ class JarvisLive:
             out_queue = self.out_queue
             session = self.session
             if out_queue and session:
-                msg = await out_queue.get()
+                try:
+                    msg = await asyncio.wait_for(out_queue.get(), timeout=KEEPALIVE_S)
+                except asyncio.TimeoutError:
+                    # Nothing to send (muted, or the voice gate let nothing through):
+                    # Gemini closes a session with no input for a few minutes.
+                    if not turn_open:
+                        await self._send_keepalive(session)
+                    continue
                 act = msg.get("activity") if isinstance(msg, dict) else None
                 if act == "start":
                     if turn_open:
@@ -1016,6 +1026,14 @@ class JarvisLive:
                     await session.send_realtime_input(media=msg)
             else:
                 await asyncio.sleep(0.1)
+
+    async def _send_keepalive(self, session) -> None:
+        """A moment of silence, so an idle session isn't closed for inactivity."""
+        try:
+            await session.send_realtime_input(
+                audio=types.Blob(data=bytes(640), mime_type="audio/pcm;rate=16000"))
+        except Exception as e:
+            print(f"[JARVIS] keep-alive failed: {e}")
 
     # ── audio engine glue ───────────────────────────────────────────────────
     # The AudioEngine (audio/engine.py) owns the mic, speaker and all

@@ -79,6 +79,7 @@ class TurnPairingTests(unittest.TestCase):
                 q.put_nowait(it)
             fake = pytypes.SimpleNamespace(out_queue=q, session=Session(), _gate_manual=manual,
                                            _awaiting_reply=False)
+            fake._send_keepalive = lambda sess: JarvisLive._send_keepalive(fake, sess)
             task = asyncio.create_task(JarvisLive._send_realtime(fake))
             while not q.empty():
                 await asyncio.sleep(0.01)
@@ -109,6 +110,47 @@ class TurnPairingTests(unittest.TestCase):
         sent, _ = self._run([{"activity": "start"}, {"activity": "start"}, {"activity": "end"},
                              {"activity": "end"}])
         self.assertEqual(sent, ["activity_start", "activity_end"])
+
+    def test_idle_session_gets_a_keepalive(self):
+        import main
+        from unittest import mock
+        with mock.patch.object(main, "KEEPALIVE_S", 0.05):
+            sent, fake = self._run_idle([])
+        self.assertGreaterEqual(sent.count("audio"), 1, "a little silence keeps Gemini from closing the session")
+        self.assertNotIn("activity_end", sent)
+        self.assertFalse(fake._awaiting_reply)
+
+    def test_no_keepalive_inside_an_open_turn(self):
+        import main
+        from unittest import mock
+        with mock.patch.object(main, "KEEPALIVE_S", 0.05):
+            sent, _ = self._run_idle([{"activity": "start"}])
+        self.assertEqual(sent, ["activity_start"])
+
+    def _run_idle(self, items):
+        import asyncio
+        import types as pytypes
+        from main import JarvisLive
+        sent = []
+
+        class Session:
+            async def send_realtime_input(self, **kw):
+                sent.append(next(iter(kw)) if "media" not in kw else "audio")
+
+        async def go():
+            q = asyncio.Queue()
+            for it in items:
+                q.put_nowait(it)
+            fake = pytypes.SimpleNamespace(out_queue=q, session=Session(), _gate_manual=True,
+                                           _awaiting_reply=False)
+            fake._send_keepalive = lambda sess: JarvisLive._send_keepalive(fake, sess)
+            task = asyncio.create_task(JarvisLive._send_realtime(fake))
+            await asyncio.sleep(0.2)
+            task.cancel()
+            return fake
+
+        fake = asyncio.run(go())
+        return sent, fake
 
     def test_automatic_mode_streams_audio(self):
         sent, _ = self._run([self.A, self.A], manual=False)
