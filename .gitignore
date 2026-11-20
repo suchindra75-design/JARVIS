@@ -1,0 +1,15 @@
+# Secrets and personal data — never commit
+config/api_keys.json
+config/certs/
+memory/long_term.json
+_backup_before_fixes_*/
+
+# Local environment and caches
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+uploads/
+
+# Generated benchmark audio and reports
+tools/bench_out/

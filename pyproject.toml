@@ -1,0 +1,12 @@
+[tool.pyright]
+venvPath = "/Users/apple/Downloads/Mark-XLIX-main"
+venv = ".venv"
+extraPaths = [
+  "/Users/apple/Downloads/Mark-XLIX-main/.venv/lib/python3.11/site-packages"
+]
+
+[tool.pyrefly]
+python-interpreter-path = "/Users/apple/Downloads/Mark-XLIX-main/.venv/bin/python"
+search-path = [
+  "/Users/apple/Downloads/Mark-XLIX-main"
+]

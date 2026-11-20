@@ -1,0 +1,7 @@
+{
+    "python.defaultInterpreterPath": "/Users/apple/Downloads/Mark-XLIX-main/.venv/bin/python",
+    "python.interpreterPath": "/Users/apple/Downloads/Mark-XLIX-main/.venv/bin/python",
+    "python.analysis.extraPaths": [
+        "/Users/apple/Downloads/Mark-XLIX-main/.venv/lib/python3.11/site-packages"
+    ]
+}
