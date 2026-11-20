@@ -162,6 +162,9 @@ class AudioEngine:
         self._running = False
         self._wake.set()
         self._close_streams()
+        w = self._worker
+        if w is not None and w.is_alive() and w is not threading.current_thread():
+            w.join(timeout=1.0)
         self.ducker.restore()
 
     def _open_streams(self) -> None:

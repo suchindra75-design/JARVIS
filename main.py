@@ -1572,10 +1572,12 @@ class JarvisLive:
 
 def main():
     ui = JarvisUI("face.png")
+    live: dict = {}
 
     def runner():
         ui.wait_for_api_key()
         jarvis = JarvisLive(ui)
+        live["jarvis"] = jarvis
         try:
             asyncio.run(jarvis.run())
         except KeyboardInterrupt:
@@ -1583,6 +1585,15 @@ def main():
 
     threading.Thread(target=runner, daemon=True).start()
     ui.root.mainloop()
+
+    # Window closed: stop the audio thread before Python tears down its
+    # libraries, and give other apps their volume back if they were ducked.
+    audio = getattr(live.get("jarvis"), "audio", None)
+    if audio is not None:
+        try:
+            audio.stop()
+        except Exception as e:
+            print(f"[JARVIS] Audio shutdown: {e}")
 
 if __name__ == "__main__":
     main()
