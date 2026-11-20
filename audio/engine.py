@@ -431,7 +431,8 @@ class AudioEngine:
         last_watch = time.monotonic()
         backoff = 1.0
         while self._running:
-            self._wake.wait(0.02)
+            if not self._cap:
+                self._wake.wait(0.02)
             self._wake.clear()
             try:
                 if self._pending_settings is not None:
@@ -486,9 +487,12 @@ class AudioEngine:
                 playing = self.is_playing
                 self.ducker.update(playing)
 
-                # mic blocks → (reference frame) → voice processing → Gemini
-                while self._cap:
+                # mic blocks → (reference frame) → voice processing → Gemini.
+                # At most 10 per pass so speaker output and the watchdog are
+                # never starved if capture ever gets ahead (e.g. after a stall).
+                for _ in range(min(len(self._cap), 10)):
                     blk = self._cap.popleft()
+                    playing = self.is_playing
                     if len(ref_pending) >= IN_FRAME:
                         ref = ref_pending[:IN_FRAME]
                         ref_pending = ref_pending[IN_FRAME:]
