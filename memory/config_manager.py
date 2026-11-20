@@ -86,6 +86,28 @@ def save_assistant_config(assistant_name: str, user_name: str) -> None:
     })
 
 
+# Gemini text models used by the action modules (not the Live voice model,
+# which lives in main.py). Google retires model IDs over time, so they are kept
+# here in one place; `text_model` / `text_model_lite` in config/api_keys.json
+# override them without a code change.
+DEFAULT_TEXT_MODEL      = "gemini-3-flash-preview"
+DEFAULT_TEXT_MODEL_LITE = "gemini-3.5-flash-lite"
+
+
+def get_text_model(lite: bool = False) -> str:
+    """Model ID for generate_content calls.
+
+    lite=True is for small, latency-sensitive jobs (intent parsing, date
+    parsing, locating a click target); the default is for heavier work
+    (search-grounded answers, code generation, summaries).
+    """
+    cfg = load_api_keys()
+    key, default = (("text_model_lite", DEFAULT_TEXT_MODEL_LITE) if lite
+                    else ("text_model", DEFAULT_TEXT_MODEL))
+    value = cfg.get(key)
+    return value.strip() if isinstance(value, str) and value.strip() else default
+
+
 def get_brief_enabled() -> bool:
     return load_api_keys().get("morning_brief_enabled", True)
 

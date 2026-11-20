@@ -24,6 +24,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 from datetime import datetime
+from memory.config_manager import get_text_model
 
 def _get_api_key() -> str:
     config_path = Path(__file__).resolve().parent.parent / "config" / "api_keys.json"
@@ -37,7 +38,7 @@ def _gemini_client():
 
     class _W:
         def generate_content(self, contents):
-            return _c.models.generate_content(model="gemini-2.5-flash", contents=contents)
+            return _c.models.generate_content(model=get_text_model(), contents=contents)
 
     return _W()
 

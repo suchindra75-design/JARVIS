@@ -6,6 +6,7 @@ import time
 import subprocess
 import platform
 from pathlib import Path
+from memory.config_manager import get_text_model
 
 try:
     import pyautogui
@@ -613,7 +614,7 @@ Rules:
 - Return ONLY the JSON, no explanation, no markdown."""
 
     try:
-        resp = _client.models.generate_content(model="gemini-2.5-flash-lite", contents=prompt)
+        resp = _client.models.generate_content(model=get_text_model(lite=True), contents=prompt)
         text = re.sub(r"```(?:json)?", "", resp.text).strip().rstrip("`").strip()
         return json.loads(text)
     except Exception as e:
