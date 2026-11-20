@@ -2,6 +2,7 @@
 config/api_keys.json
 config/certs/
 memory/long_term.json
+memory/voice_profile*.npz
 _backup_before_fixes_*/
 
 # Local environment and caches
@@ -13,3 +14,6 @@ uploads/
 
 # Generated benchmark audio and reports
 tools/bench_out/
+
+# Downloaded ML models (fetched and checksum-verified at runtime)
+models/

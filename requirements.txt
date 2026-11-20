@@ -31,3 +31,5 @@ qrcode[pil]
 livekit==1.2.0
 webrtcvad-wheels==2.0.14.post1
 soxr==1.1.0
+# voice identity (local speaker embedding; model downloaded on first use)
+sherpa-onnx==2.0.0
