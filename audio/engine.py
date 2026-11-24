@@ -1,11 +1,11 @@
 """
-audio/engine.py — the one place JARVIS captures and plays audio.
+audio/engine.py — the one place Raya captures and plays audio.
 
 Threads
   PortAudio input callback   copies 10 ms mic blocks into a bounded ring
   PortAudio output callback  pulls 10 ms from the playback ring, taps what it played
   DSP worker (this module)   echo reference → voice processing → 20 ms chunks to Gemini;
-                             JARVIS audio → output enhancement → playback ring;
+                             Raya audio → output enhancement → playback ring;
                              meters, latency stats, device watchdog
 Nothing here runs on the Qt thread or the asyncio loop. The loop hands audio in
 with play() (non-blocking) and receives mic chunks through `on_chunk`.
@@ -28,7 +28,7 @@ from audio.output import BLOCK as OUT_BLOCK, OUT_RATE, Ducker, OutputEnhancer
 from audio.voice import FRAME as IN_FRAME, SAMPLE_RATE as IN_RATE, VoiceConfig, VoiceProcessor
 
 SEND_FRAMES = 2                      # 2 × 10 ms = 20 ms chunks to Gemini
-MAX_PLAYBACK_S = 120                 # cap on queued JARVIS audio (a very long answer)
+MAX_PLAYBACK_S = 120                 # cap on queued Raya audio (a very long answer)
 PREBUFFER_MS = 60                    # start playing once this much is queued
 HALF_DUPLEX_TAIL_MS = 300            # keep the mic closed this long after the speaker goes quiet
 SPECTRUM_BANDS = 24
@@ -47,7 +47,7 @@ class AudioSettings:
     ducking: bool = False
     output_device: str | None = None
     output_volume: float = 1.0
-    full_duplex: bool = False            # experimental: keep the mic open while JARVIS speaks
+    full_duplex: bool = False            # experimental: keep the mic open while Raya speaks
 
     @classmethod
     def from_dict(cls, d: dict | None) -> "AudioSettings":
@@ -108,7 +108,7 @@ class AudioEngine:
 
         # rings (bounded)
         self._cap = collections.deque(maxlen=100)            # 1 s of 10 ms mic blocks
-        self._raw_out = collections.deque()                  # JARVIS audio not yet enhanced (bytes)
+        self._raw_out = collections.deque()                  # Raya audio not yet enhanced (bytes)
         self._raw_out_samples = 0
         self._raw_lock = threading.Lock()
         self._gen = 0                                        # bumped by flush(); stale audio is dropped
@@ -301,7 +301,7 @@ class AudioEngine:
     # ── API for the asyncio side ─────────────────────────────────────────
 
     def play(self, pcm24: bytes) -> None:
-        """Queue JARVIS audio (24 kHz int16). Never blocks."""
+        """Queue Raya audio (24 kHz int16). Never blocks."""
         if not pcm24:
             return
         n = len(pcm24) // 2
@@ -313,7 +313,7 @@ class AudioEngine:
         self._wake.set()
 
     def flush(self) -> None:
-        """Stop JARVIS immediately (interrupt). Fades the last 10 ms to avoid a click."""
+        """Stop Raya immediately (interrupt). Fades the last 10 ms to avoid a click."""
         with self._raw_lock:
             self._raw_out.clear()
             self._raw_out_samples = 0
@@ -333,7 +333,7 @@ class AudioEngine:
 
     @property
     def is_playing(self) -> bool:
-        """True while JARVIS audio is queued or the speaker played it within the last 80 ms."""
+        """True while Raya audio is queued or the speaker played it within the last 80 ms."""
         return (self._raw_out_samples + self._play_samples) > 0 or \
             (time.monotonic() - self._last_played_audio) < 0.08
 
@@ -461,7 +461,7 @@ class AudioEngine:
                     self._apply_output_settings()
                     self._update_delay()
 
-                # No speaker: drop JARVIS audio rather than let it pile up and
+                # No speaker: drop Raya audio rather than let it pile up and
                 # keep the half-duplex gate closed forever.
                 if self._out_stream is None:
                     with self._raw_lock:
@@ -471,7 +471,7 @@ class AudioEngine:
                         self._play.clear()
                         self._play_samples = 0
 
-                # JARVIS audio → enhancer → playback ring
+                # Raya audio → enhancer → playback ring
                 while True:
                     with self._raw_lock:
                         if not self._raw_out:
@@ -577,13 +577,13 @@ class AudioEngine:
             self._levels = {**self._levels, "mic_db": mic_db, "speech": speech, "sending": False}
             return
 
-        # half-duplex: keep the mic closed while JARVIS is audible, plus a short tail
+        # half-duplex: keep the mic closed while Raya is audible, plus a short tail
         recently = (time.monotonic() - self._last_played_audio) < HALF_DUPLEX_TAIL_MS / 1000
         gate_closed = (not self.settings.full_duplex or not self.voice.active
                        or not self.settings.echo_cancellation) and (playing or recently)
         sending = (not gate_closed) and self.should_send()
 
-        # reply-latency bookkeeping: end of user speech → first JARVIS audio
+        # reply-latency bookkeeping: end of user speech → first Raya audio
         if sending and not speech and self._levels.get("speech"):
             self._speech_end_t = time.monotonic()
         if playing and not self._was_playing and self._speech_end_t:
@@ -624,7 +624,7 @@ class AudioEngine:
         """Hand each finished stretch of the user's speech to on_utterance (speaker check).
 
         Only audio that is actually being sent to Gemini counts, so mic tests,
-        muted time and JARVIS's own voice are never checked.
+        muted time and Raya's own voice are never checked.
         """
         if self.on_utterance is None:
             return

@@ -167,7 +167,7 @@ class GeneralPane(Pane):
         self.ctl = ctl
         cfg = ctl.read_config()
         self.section("Identity")
-        self.name = _field(cfg.get("assistant_name") or "JARVIS", "JARVIS")
+        self.name = _field(cfg.get("assistant_name") or "Raya", "Raya")
         self.control("Assistant name", "Shown in the window and used by the assistant to refer to itself.", self.name)
         self.user = _field(cfg.get("user_name") or "", "Leave blank for “sir”")
         self.control("What it calls you", "Leave blank to be addressed as “sir”.", self.user)
@@ -184,7 +184,7 @@ class GeneralPane(Pane):
         self.style.setMaxLength(400)
         self.style.editingFinished.connect(self._set_style)
         self.control("Speaking style", "How it should sound: tone, mood, pace. Leave blank for the default "
-                     "Iron Man style. Takes effect the next time it starts.", self.style)
+                     "style (professional, efficient, slightly witty). Takes effect the next time it starts.", self.style)
 
         self.section("Appearance")
         from ui import HueWheel                           # reuse the existing colour wheel
@@ -255,7 +255,7 @@ class AudioPane(Pane):
     _rtt = pyqtSignal(object)
 
     def __init__(self, ctl: SettingsController):
-        super().__init__("Audio", "Your microphone and JARVIS's voice. Changes apply immediately.")
+        super().__init__("Audio", "Your microphone and Raya's voice. Changes apply immediately.")
         self.ctl = ctl
         eng = ctl.audio
         self.eng = eng
@@ -277,9 +277,9 @@ class AudioPane(Pane):
         self.seg = Segmented([("off", "Off"), ("light", "Light"), ("standard", "Standard")], s.noise_suppression)
         self.seg.changed.connect(lambda k: self._set(noise_suppression=k))
         self.control("Noise suppression", "Standard removes fans and hum. Light keeps more of the room.", self.seg)
-        self.t_aec = self.toggle("Echo cancellation", "Removes JARVIS's own voice from your microphone.",
+        self.t_aec = self.toggle("Echo cancellation", "Removes Raya's own voice from your microphone.",
                                  s.echo_cancellation, lambda on: self._set(echo_cancellation=on))
-        self.t_agc = self.toggle("Automatic gain", "Evens out quiet and loud speech. Holds still while JARVIS talks.",
+        self.t_agc = self.toggle("Automatic gain", "Evens out quiet and loud speech. Holds still while Raya talks.",
                                  s.auto_gain, lambda on: self._set(auto_gain=on))
         self.meter = LevelMeter()
         self.vad = label("", 11, C.TEXT_DIM)
@@ -291,18 +291,18 @@ class AudioPane(Pane):
         self.control("Live input", "Level after processing. The dot lights when speech is detected. "
                      "The test records 5 s and plays it back; nothing is sent to Gemini.", mt)
 
-        self.section("JARVIS speaker")
+        self.section("Raya speaker")
         self.out_combo = _combo()
         rescan2 = button("↻", "ghost", 30); rescan2.setFixedWidth(34); rescan2.setToolTip("Rescan devices")
         rescan2.clicked.connect(lambda: self._load_devices(True))
         self.control("Output device", "", _rowbox(self.out_combo, rescan2))
         self.out_combo.activated.connect(lambda _i: self._set(output_device=self.out_combo.currentData()))
-        self.t_enh = self.toggle("Output enhancement", "Keeps JARVIS's voice even and prevents clipping. This shapes "
+        self.t_enh = self.toggle("Output enhancement", "Keeps Raya's voice even and prevents clipping. This shapes "
                                  "what you hear; it doesn't remove noise in your room.",
                                  s.output_enhancement, lambda on: self._set(output_enhancement=on))
         self.t_norm = self.toggle("Volume normalisation", "Brings quiet and loud replies to the same level.",
                                   s.normalization, lambda on: self._set(normalization=on))
-        self.t_duck = self.toggle("Lower other apps while JARVIS talks",
+        self.t_duck = self.toggle("Lower other apps while Raya talks",
                                   eng.ducker.reason or "Other apps drop to 30 % and come back afterwards.",
                                   s.ducking, lambda on: self._set(ducking=on))
         self.vol = _slider(); self.vol.setRange(0, 150); self.vol.setValue(int(round(s.output_volume * 100)))
@@ -318,9 +318,9 @@ class AudioPane(Pane):
         self.t_master = self.toggle("Audio processing", "Off = bypass: raw microphone and speaker. Use this if "
                                     "anything sounds wrong.", s.processing_enabled,
                                     lambda on: self._set(processing_enabled=on))
-        self.t_duplex = self.toggle("Talk over JARVIS (experimental)",
-                                    "Keeps the mic open while JARVIS speaks so you can interrupt by voice. Needs echo "
-                                    "cancellation; on laptop speakers your voice is turned down while JARVIS talks.",
+        self.t_duplex = self.toggle("Talk over Raya (experimental)",
+                                    "Keeps the mic open while Raya speaks so you can interrupt by voice. Needs echo "
+                                    "cancellation; on laptop speakers your voice is turned down while Raya talks.",
                                     s.full_duplex, lambda on: self._set(full_duplex=on))
         grid = QGridLayout(); grid.setHorizontalSpacing(16); grid.setVerticalSpacing(5)
         self._stat = {}
@@ -425,7 +425,7 @@ class AudioPane(Pane):
         lv = self.eng.levels()
         self.meter.set_level(lv.get("mic_db", -120.0), lv.get("speech", False))
         self.vad.setText("Speech detected" if lv.get("speech") else ("Sending to Gemini" if lv.get("sending") else
-                                                                       "Not sending (muted or JARVIS speaking)"))
+                                                                       "Not sending (muted or Raya speaking)"))
         if not self.mic_btn.isEnabled() and not self.eng.mic_test_running:
             if self.eng.is_playing:
                 self.mic_btn.setText("Playing back…")
@@ -770,7 +770,7 @@ class VoicePane(Pane):
         if self._mode == "check":
             self.rec_msg.setText("Checking…")
             step = self._steps[self._idx]
-            keep = os.environ.get("JARVIS_KEEP_CHECK_AUDIO")    # measurement sessions only
+            keep = os.environ.get("RAYA_KEEP_CHECK_AUDIO")    # measurement sessions only
             if keep:
                 try:
                     from audio.speaker_id import ROOT as _root
@@ -982,7 +982,7 @@ class AboutPane(Pane):
         super().__init__("About")
         root = os.path.dirname(os.path.abspath(__file__))
         rows = [
-            ("Version", "Mark XLIX"),
+            ("Version", "Raya"),
             ("System", f"macOS {platform.mac_ver()[0]}" if platform.system() == "Darwin" else platform.platform()),
             ("Reduce motion", "On (animations simplified)" if reduce_motion() else "Off"),
             ("Settings file", os.path.join(root, "config", "api_keys.json")),

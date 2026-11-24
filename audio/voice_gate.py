@@ -124,7 +124,7 @@ class VoiceGate:
         return self._state
 
     def feed(self, frame: np.ndarray, speech: bool, allowed: bool) -> None:
-        """One 10 ms int16 frame of processed mic audio. allowed=False while JARVIS
+        """One 10 ms int16 frame of processed mic audio. allowed=False while Raya
         is speaking, the mic is muted, or the phone is talking."""
         if not allowed:
             if self._state == "verified":

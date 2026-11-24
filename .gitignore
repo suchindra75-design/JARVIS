@@ -19,4 +19,4 @@ tools/bench_out/
 
 # Downloaded ML models (fetched and checksum-verified at runtime)
 models/
-config/.jarvis.lock
+config/.raya.lock

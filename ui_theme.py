@@ -1,5 +1,5 @@
 """
-ui_theme.py — Graphite & Silver design system for Mark XLIX.
+ui_theme.py — Graphite & Silver design system for Raya.
 
 One place for tokens, type roles, motion helpers and the small components every
 screen shares (chip, buttons, toggle, segmented control, level meter, toast).

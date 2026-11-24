@@ -1,11 +1,11 @@
 """
-ui_stage.py — the central "stage": what JARVIS is doing, in words and one voice ribbon.
+ui_stage.py — the central "stage": what Raya is doing, in words and one voice ribbon.
 
 States (all driven by real app state; nothing here is decorative-only):
   ready       connected, mic open, nobody talking        faint ribbon drifting slowly
   listening   your speech detected on the mic (VAD)       ribbon follows your mic level
   processing  Gemini is working / a tool is running       flat line, amber light travelling
-  speaking    JARVIS audio is playing                     ribbon follows the output spectrum
+  speaking    Raya audio is playing                     ribbon follows the output spectrum
   muted       microphone muted                            dim flat line
   connecting  connecting / reconnecting to Gemini         slow pulse
   error       something needs attention                   muted-red dashed line + one action
@@ -214,7 +214,7 @@ class VoiceStage(QWidget):
     interrupt_requested = pyqtSignal()
     error_action = pyqtSignal()
 
-    def __init__(self, assistant_name: str = "JARVIS", parent=None):
+    def __init__(self, assistant_name: str = "Raya", parent=None):
         super().__init__(parent)
         self.setObjectName("VoiceStage")
         self._bg: QPixmap | None = None        # gradient rendered once per size, reused every frame
@@ -253,7 +253,7 @@ class VoiceStage(QWidget):
 
         dock = QHBoxLayout(); dock.setSpacing(14); dock.addStretch()
         self.interrupt_btn = button("Interrupt   esc", "ghost", 32)
-        self.interrupt_btn.setToolTip("Stop JARVIS speaking (Esc)")
+        self.interrupt_btn.setToolTip("Stop Raya speaking (Esc)")
         self.interrupt_btn.clicked.connect(self.interrupt_requested.emit)
         self.mic = MicButton()
         self.mic.toggled.connect(self._on_mic)
@@ -297,7 +297,7 @@ class VoiceStage(QWidget):
         self._refresh()
 
     def set_activity(self, text: str) -> None:
-        """What JARVIS is doing right now (e.g. 'Searching the web for …')."""
+        """What Raya is doing right now (e.g. 'Searching the web for …')."""
         self._activity = text
         self._refresh()
 
@@ -313,7 +313,7 @@ class VoiceStage(QWidget):
         QTimer.singleShot(2600, self._refresh)
 
     def set_hearing_text(self, text: str) -> None:
-        """Live transcript of what the user is saying (shown until JARVIS answers)."""
+        """Live transcript of what the user is saying (shown until Raya answers)."""
         self._hearing_caption = text
         self._hearing_at = time.monotonic()
         self._refresh()

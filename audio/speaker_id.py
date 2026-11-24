@@ -12,7 +12,7 @@ and is 2.5× faster (46 ms per check). MODEL_THRESHOLD lets ~1 % of other
 people through on 1 s of speech.
 
 What it is NOT: security. Recordings and similar voices can fool it, so it is
-display-only — it never approves actions and never decides what JARVIS does.
+display-only — it never approves actions and never decides what Raya does.
 It is separate from transcription (that's Gemini, and says *what* was said).
 
 Privacy: the profile (voiceprints only, no audio) is stored in

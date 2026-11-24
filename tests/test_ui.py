@@ -75,7 +75,7 @@ class UITestBase(unittest.TestCase):
         cls.tmp = Path(tempfile.mkdtemp())
         cfg = cls.tmp / "api_keys.json"
         cfg.write_text(json.dumps({"gemini_api_key": "TEST-KEY-not-real-0000000", "os_system": "mac",
-                                   "assistant_name": "JARVIS"}))
+                                   "assistant_name": "Raya"}))
         cls.patches = [mock.patch.object(cm, "CONFIG_FILE", cfg), mock.patch.object(cm, "CONFIG_DIR", cls.tmp),
                        mock.patch.object(U, "API_FILE", cfg), mock.patch.object(U, "CONFIG_DIR", cls.tmp)]
         for p in cls.patches:
@@ -94,7 +94,7 @@ class UITestBase(unittest.TestCase):
                                           setattr(self.eng, "_out_stream", FakeStream()))
         self.eng.start()
         self.sid = SpeakerIdentity(profile_path=self.tmp / f"voice_{id(self)}.npz")
-        self.j = U.JarvisUI("face.png")
+        self.j = U.RayaUI("face.png")
         self.w = self.j._win
         self.w.resize(1180, 760)
         self.j.attach_audio(self.eng)

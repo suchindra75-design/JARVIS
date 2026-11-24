@@ -2,7 +2,7 @@
 tools/audio_soak.py — accelerated long-run test of the AudioEngine (no devices).
 
 Drives the engine's callbacks with fake streams as fast as it can process,
-simulating a long conversation: mic audio continuously, JARVIS replies of
+simulating a long conversation: mic audio continuously, Raya replies of
 3–12 s, frequent interrupts, settings changes and device "unplugs".
 Reports memory, buffer depths and processing cost per simulated 10 minutes.
 

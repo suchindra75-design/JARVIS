@@ -1,5 +1,5 @@
 """
-tools/audio_bench.py — offline and acoustic benchmark for JARVIS voice processing.
+tools/audio_bench.py — offline and acoustic benchmark for Raya voice processing.
 
 Developer tool, not used by the app. Builds reproducible test scenes from
 macOS `say` voices plus generated noise, runs candidate processing chains,
@@ -33,7 +33,7 @@ FRAME = SR // 100          # 10 ms
 RNG = np.random.default_rng(1234)
 
 NEAR_VOICES = ["Samantha", "Karen", "Rishi", "Moira", "Fred", "Tessa"]
-FAR_VOICE = "Daniel"       # plays the part of JARVIS speaking
+FAR_VOICE = "Daniel"       # plays the part of Raya speaking
 PHRASES = [
     "Open Spotify and play some relaxing jazz music.",
     "What will the weather be like in Bangalore tomorrow morning?",
@@ -368,7 +368,7 @@ def acoustic() -> None:
     clean_noisy = read_wav(SCENES / "fan5_0.clean.wav")
     report = {"device_in": sd.query_devices(sd.default.device[0])["name"],
               "device_out": sd.query_devices(sd.default.device[1])["name"]}
-    print(f"Playing {len(far)/SR:.1f}s of 'JARVIS' speech through {report['device_out']} and recording…")
+    print(f"Playing {len(far)/SR:.1f}s of 'Raya' speech through {report['device_out']} and recording…")
     rec = sd.playrec((far * 0.5).reshape(-1, 1), SR, channels=1, dtype="float32", blocking=True)[:, 0]
     if rms_db(rec) < -75:
         sys.exit("The recording is silent — macOS probably blocked microphone access for this process.")

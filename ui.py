@@ -403,7 +403,7 @@ class FileDropZone(QWidget):
 
     def _browse(self):
         path, _ = QFileDialog.getOpenFileName(
-            self, "Select a file for JARVIS", str(Path.home()),
+            self, "Select a file for Raya", str(Path.home()),
             "All Files (*.*);;"
             "Images (*.jpg *.jpeg *.png *.gif *.webp *.bmp *.svg);;"
             "Documents (*.pdf *.docx *.txt *.md *.pptx);;"
@@ -625,7 +625,7 @@ class SetupOverlay(QWidget):
             return w
 
         layout.addWidget(_lbl("◈  INITIALISATION REQUIRED", 13, True))
-        layout.addWidget(_lbl("Configure J.A.R.V.I.S. before first boot.", 9, color=C.PRI_DIM))
+        layout.addWidget(_lbl("Configure Raya before first boot.", 9, color=C.PRI_DIM))
         layout.addSpacing(6)
 
         sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine)
@@ -813,7 +813,7 @@ class HueWheel(QWidget):
 
 
 class ClipboardPanel(QWidget):
-    """Floating panel shown when text is copied — offers quick Jarvis actions."""
+    """Floating panel shown when text is copied — offers quick Raya actions."""
 
     action_requested = pyqtSignal(str)
     _W, _H = 326, 112
@@ -1254,7 +1254,7 @@ class RemoteKeyOverlay(QWidget):
         self._qr_label.setStyleSheet(
             f"color: {C.GREEN}; background: {C.OK_BG}; border-radius: 10px;"
         )
-        self._timer_lbl.setText("Phone connected — JARVIS ready")
+        self._timer_lbl.setText("Phone connected — Raya ready")
         self._timer_lbl.setStyleSheet(f"color: {C.GREEN}; background: transparent;")
 
     def _refresh_key(self):
@@ -1318,7 +1318,7 @@ class MainWindow(QMainWindow):
 
         # Load customization from config
         _cfg = _read_full_config()
-        self._assistant_name: str = (_cfg.get("assistant_name") or "JARVIS").strip()
+        self._assistant_name: str = (_cfg.get("assistant_name") or "Raya").strip()
         _display = self._assistant_name.upper()
 
         # Kayıtlı UI rengini panel/stylesheet'ler kurulmadan ÖNCE uygula
@@ -1326,7 +1326,7 @@ class MainWindow(QMainWindow):
         if _ui_color and _ui_color.lower() != DEFAULT_UI_COLOR:
             apply_ui_accent(_ui_color)
 
-        self.setWindowTitle(f"{_display} — MARK XLIX")
+        self.setWindowTitle(_window_title(_display))
         self.setMinimumSize(_MIN_W, _MIN_H)
         self.resize(_DEFAULT_W, _DEFAULT_H)
 
@@ -1338,13 +1338,13 @@ class MainWindow(QMainWindow):
 
         self.on_text_command   = None
         self.on_remote_clicked = None   # callable: () -> (url, key) | None
-        self.audio = None               # AudioEngine (set by JarvisUI.attach_audio)
-        self.on_interrupt      = None   # callable: () -> None — stop JARVIS mid-speech
+        self.audio = None               # AudioEngine (set by RayaUI.attach_audio)
+        self.on_interrupt      = None   # callable: () -> None — stop Raya mid-speech
         self._muted            = False
         self._current_file: str | None = None
         self._remote_overlay: RemoteKeyOverlay | None = None
 
-        self.speaker_id = None                 # SpeakerIdentity (set by JarvisUI.attach_speaker_id)
+        self.speaker_id = None                 # SpeakerIdentity (set by RayaUI.attach_speaker_id)
         self._show_speaker = bool(_cfg.get("voice_identity_display", True))
         self._settings = None
 
@@ -1361,7 +1361,7 @@ class MainWindow(QMainWindow):
         body.setContentsMargins(0, 0, 0, 0)
         body.setSpacing(0)
 
-        # Stage: what JARVIS is doing (voice ribbon, title, caption, mic dock)
+        # Stage: what Raya is doing (voice ribbon, title, caption, mic dock)
         self.stage = VoiceStage(self._assistant_name)
         self.stage.mute_toggled.connect(self._set_muted)
         self.stage.interrupt_requested.connect(self._do_interrupt)
@@ -1556,9 +1556,9 @@ class MainWindow(QMainWindow):
     # Icon generation — arc-reactor style, rendered with Pillow
     # ------------------------------------------------------------------
     @staticmethod
-    def _build_jarvis_icon(out_path: Path) -> bool:
+    def _build_raya_icon(out_path: Path) -> bool:
         """
-        Render a JARVIS arc-reactor icon at 4× resolution and downsample
+        Render a Raya arc-reactor icon at 4× resolution and downsample
         for crisp results at all sizes. Saves a multi-res .ico to out_path.
         Returns True on success.
         """
@@ -1754,7 +1754,7 @@ class MainWindow(QMainWindow):
             sc.TargetPath       = target
             sc.Arguments        = f'"{args}"'
             sc.WorkingDirectory = work_dir
-            sc.Description      = "J.A.R.V.I.S AI Assistant"
+            sc.Description      = "Raya AI Assistant"
             sc.IconLocation     = icon_loc
             sc.save()
             return
@@ -1775,7 +1775,7 @@ class MainWindow(QMainWindow):
             f'sc.TargetPath = "{q(target)}"',
             f'sc.Arguments = Chr(34) & "{q(args)}" & Chr(34)',
             f'sc.WorkingDirectory = "{q(work_dir)}"',
-            'sc.Description = "J.A.R.V.I.S AI Assistant"',
+            'sc.Description = "Raya AI Assistant"',
             f'sc.IconLocation = "{q(icon_loc)}"',
             'sc.Save',
             'If Err.Number <> 0 Then WScript.Quit 1',
@@ -1813,9 +1813,9 @@ class MainWindow(QMainWindow):
         desktop = self._get_desktop_dir()
 
         # Arc-reactor icon (.ico — also exported as .png for Linux/macOS)
-        ico_path = Path(__file__).resolve().parent / "config" / "jarvis.ico"
+        ico_path = Path(__file__).resolve().parent / "config" / "raya.ico"
         if not ico_path.exists():
-            self._build_jarvis_icon(ico_path)
+            self._build_raya_icon(ico_path)
 
         try:
             _os = platform.system()
@@ -1825,14 +1825,14 @@ class MainWindow(QMainWindow):
             if _os == "Windows":
                 pythonw  = python.parent / "pythonw.exe"
                 target   = str(pythonw if pythonw.exists() else python)
-                lnk      = str(desktop / "J.A.R.V.I.S.lnk")
+                lnk      = str(desktop / "Raya.lnk")
                 icon_loc = str(ico_path) if ico_path.exists() else f"{target},0"
                 self._create_lnk_windows(lnk, target, str(script),
                                          str(script.parent), icon_loc)
 
             # ── macOS — proper .app bundle (no Terminal window) ───────────────
             elif _os == "Darwin":
-                app     = desktop / "J.A.R.V.I.S.app"
+                app     = desktop / "Raya.app"
                 mac_dir = app / "Contents" / "MacOS"
                 res_dir = app / "Contents" / "Resources"
                 mac_dir.mkdir(parents=True, exist_ok=True)
@@ -1840,7 +1840,7 @@ class MainWindow(QMainWindow):
 
                 # Launcher executable (bash — runs as background process,
                 # macOS does NOT open Terminal for executables inside .app bundles)
-                launcher = mac_dir / "JARVIS"
+                launcher = mac_dir / "Raya"
                 launcher.write_text(
                     "#!/usr/bin/env bash\n"
                     f'cd "{script.parent}"\n'
@@ -1855,10 +1855,10 @@ class MainWindow(QMainWindow):
                     '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
                     '"http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
                     '<plist version="1.0"><dict>\n'
-                    '  <key>CFBundleExecutable</key><string>JARVIS</string>\n'
+                    '  <key>CFBundleExecutable</key><string>Raya</string>\n'
                     '  <key>CFBundleIdentifier</key>'
-                    '<string>com.jarvis.assistant</string>\n'
-                    '  <key>CFBundleName</key><string>J.A.R.V.I.S</string>\n'
+                    '<string>com.raya.assistant</string>\n'
+                    '  <key>CFBundleName</key><string>Raya</string>\n'
                     '  <key>CFBundlePackageType</key><string>APPL</string>\n'
                     '  <key>CFBundleVersion</key><string>1.0</string>\n'
                     '</dict></plist>\n'
@@ -1896,10 +1896,10 @@ class MainWindow(QMainWindow):
                         png_path = ico_path  # fallback to .ico
 
                 icon_line = f"Icon={png_path}\n" if png_path.exists() else ""
-                desk = desktop / "J.A.R.V.I.S.desktop"
+                desk = desktop / "Raya.desktop"
                 desk.write_text(
                     "[Desktop Entry]\n"
-                    "Name=J.A.R.V.I.S\n"
+                    "Name=Raya\n"
                     f'Exec="{python}" "{script}"\n'
                     f"Path={script.parent}\n"
                     "Type=Application\n"
@@ -1924,6 +1924,28 @@ class MainWindow(QMainWindow):
             self._route_log(
                 f"ERR: Shortcut failed — {e} (desktop dir: '{desktop}')"
             )
+
+    _LEGACY_SHORTCUTS = ("J.A.R.V.I.S.app", "J.A.R.V.I.S.lnk", "J.A.R.V.I.S.desktop")
+
+    def _migrate_legacy_shortcut(self):
+        """Replace a desktop shortcut made under the old name with a Raya one.
+        The old one is removed only once the new one exists."""
+        import shutil
+        try:
+            desktop = self._get_desktop_dir()
+            old = [desktop / n for n in self._LEGACY_SHORTCUTS if (desktop / n).exists()]
+            if not old:
+                return
+            self._create_desktop_shortcut()
+            new = desktop / {"Windows": "Raya.lnk", "Darwin": "Raya.app"}.get(platform.system(),
+                                                                             "Raya.desktop")
+            if not new.exists():
+                return
+            for p in old:
+                shutil.rmtree(p) if p.is_dir() else p.unlink()
+            print(f"[Rename] desktop shortcut → {new.name}")
+        except Exception as e:
+            print(f"[Rename] ⚠️ desktop shortcut not renamed: {e}")
 
     def _toggle_fullscreen(self):
         if self.isFullScreen():
@@ -2013,7 +2035,7 @@ class MainWindow(QMainWindow):
                 key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
                     r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_READ)
                 try:
-                    winreg.QueryValueEx(key, "JARVIS_AI")
+                    winreg.QueryValueEx(key, "Raya")
                     return True
                 except FileNotFoundError:
                     return False
@@ -2021,9 +2043,9 @@ class MainWindow(QMainWindow):
                     winreg.CloseKey(key)
             elif _OS == "Darwin":
                 return (Path.home() / "Library" / "LaunchAgents"
-                        / "com.jarvis.assistant.plist").exists()
+                        / "com.raya.assistant.plist").exists()
             else:
-                return (Path.home() / ".config" / "autostart" / "jarvis.desktop").exists()
+                return (Path.home() / ".config" / "autostart" / "raya.desktop").exists()
         except Exception:
             return False
 
@@ -2036,17 +2058,17 @@ class MainWindow(QMainWindow):
                 reg = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
                     r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_ALL_ACCESS)
                 if currently_on:
-                    winreg.DeleteValue(reg, "JARVIS_AI")
+                    winreg.DeleteValue(reg, "Raya")
                 else:
                     pythonw = Path(sys.executable).parent / "pythonw.exe"
                     exe = str(pythonw if pythonw.exists() else sys.executable)
-                    winreg.SetValueEx(reg, "JARVIS_AI", 0, winreg.REG_SZ,
+                    winreg.SetValueEx(reg, "Raya", 0, winreg.REG_SZ,
                                       f'"{exe}" "{script}"')
                 winreg.CloseKey(reg)
             elif _OS == "Darwin":
                 plist_dir = Path.home() / "Library" / "LaunchAgents"
                 plist_dir.mkdir(parents=True, exist_ok=True)
-                plist = plist_dir / "com.jarvis.assistant.plist"
+                plist = plist_dir / "com.raya.assistant.plist"
                 if currently_on:
                     plist.unlink(missing_ok=True)
                 else:
@@ -2055,7 +2077,7 @@ class MainWindow(QMainWindow):
                         '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
                         '"http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
                         '<plist version="1.0"><dict>\n'
-                        '  <key>Label</key><string>com.jarvis.assistant</string>\n'
+                        '  <key>Label</key><string>com.raya.assistant</string>\n'
                         '  <key>ProgramArguments</key><array>\n'
                         f'    <string>{sys.executable}</string>\n'
                         f'    <string>{script}</string>\n'
@@ -2066,7 +2088,7 @@ class MainWindow(QMainWindow):
             else:
                 desk_dir = Path.home() / ".config" / "autostart"
                 desk_dir.mkdir(parents=True, exist_ok=True)
-                desk = desk_dir / "jarvis.desktop"
+                desk = desk_dir / "raya.desktop"
                 if currently_on:
                     desk.unlink(missing_ok=True)
                 else:
@@ -2097,9 +2119,9 @@ class MainWindow(QMainWindow):
     def _apply_name_update(self, name: str, user_name: str, ui_color: str = ""):
         """Update everything that shows the name/accent and save it (merge, atomic)."""
         from memory.config_manager import update_config
-        self._assistant_name = name.strip() or "JARVIS"
+        self._assistant_name = name.strip() or "Raya"
         display = self._assistant_name.upper()
-        self.setWindowTitle(f"{display} — MARK XLIX")
+        self.setWindowTitle(_window_title(display))
         self._brand.setText(display)
         self.stage.set_name(self._assistant_name)
         self.convo.set_name(self._assistant_name)
@@ -2336,7 +2358,7 @@ class MainWindow(QMainWindow):
             err = a.stats().get("input_error") if a else "Audio engine not running"
             self.chip_mic.set("Mic problem", "bad", err or "")
         elif a.levels().get("sending") is False and a.is_playing:
-            self.chip_mic.set("Mic paused", "neutral", "Paused while JARVIS speaks")
+            self.chip_mic.set("Mic paused", "neutral", "Paused while Raya speaks")
         else:
             self.chip_mic.set("Mic live", "live", "Microphone is live")
 
@@ -2561,6 +2583,9 @@ class MainWindow(QMainWindow):
     def create_shortcut(self) -> None:
         self._create_desktop_shortcut()
 
+    def migrate_legacy_shortcut(self) -> None:
+        self._migrate_legacy_shortcut()
+
     def save_audio(self, settings: dict) -> None:
         from memory.config_manager import save_audio_settings
         save_audio_settings(settings)
@@ -2641,7 +2666,7 @@ class MainWindow(QMainWindow):
             self._overlay.hide()
             self._overlay = None
         self._apply_state("LISTENING")
-        self._assistant_name = _read_full_config().get("assistant_name", "JARVIS") or "JARVIS"
+        self._assistant_name = _read_full_config().get("assistant_name", "Raya") or "Raya"
         self._route_log(f"SYS: Initialised. {self._assistant_name} online.")
 
 class _RootShim:
@@ -2653,7 +2678,12 @@ class _RootShim:
         pass
 
 
-class JarvisUI:
+def _window_title(display: str) -> str:
+    """"RAYA", or "E V — RAYA" when the assistant has another name."""
+    return "RAYA" if display.strip().upper() == "RAYA" else f"{display} — RAYA"
+
+
+class RayaUI:
     def __init__(self, face_path: str, size=None):
         self._app = QApplication.instance() or QApplication(sys.argv)
         self._app.setStyle("Fusion")
@@ -2772,6 +2802,10 @@ class JarvisUI:
     def wait_for_api_key(self):
         while not self._win._ready:
             time.sleep(0.1)
+
+    def migrate_legacy_shortcut(self):
+        """Main thread only: swap a JARVIS-era desktop shortcut for a Raya one."""
+        self._win.migrate_legacy_shortcut()
 
     def show_content(self, title: str, text: str):
         """Thread-safe: display content in the panel below the HUD."""

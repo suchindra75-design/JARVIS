@@ -3,7 +3,7 @@ ui_conversation.py — conversation sidebar: messages, tool activity, results, f
 
 Replaces the single typewriter log. Rows are real widgets with selectable text:
   you          your message (voice transcript, typed, or from the phone)
-  assistant    JARVIS's reply
+  assistant    Raya's reply
   tool         a tool call: running → done / failed / declined / waiting for approval, with duration
   note         small system notes (connected, phone paired, …)
   error        a failure you should notice
@@ -33,7 +33,7 @@ TOOL_NAMES = {
     "browser_control": "Browser", "file_controller": "Files", "desktop_control": "Desktop",
     "code_helper": "Code", "dev_agent": "Build project", "computer_control": "Keyboard & mouse",
     "game_updater": "Games", "flight_finder": "Flights", "system_status": "System status",
-    "file_processor": "Process file", "save_memory": "Remember", "shutdown_jarvis": "Shut down",
+    "file_processor": "Process file", "save_memory": "Remember", "shutdown_raya": "Shut down",
 }
 
 # log tags written by actions → tool names (for routing progress lines)
@@ -323,7 +323,7 @@ class ConversationPanel(QWidget):
     send_text = pyqtSignal(str)
     attach_requested = pyqtSignal()
 
-    def __init__(self, assistant_name: str = "JARVIS", parent=None):
+    def __init__(self, assistant_name: str = "Raya", parent=None):
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setObjectName("ConvPanel")
@@ -346,14 +346,14 @@ class ConversationPanel(QWidget):
         self.stack = QStackedWidget()
         self.convo = _List(10)
         self.results = _List(10)
-        self.results_empty = label("Web results and answers JARVIS shows on screen will appear here.",
+        self.results_empty = label("Web results and answers Raya shows on screen will appear here.",
                                    11.5, C.TEXT_DIM, wrap=True)
         self.results.lay.insertWidget(0, self.results_empty)
         self.files = QWidget()
         fl = QVBoxLayout(self.files); fl.setContentsMargins(14, 14, 14, 14); fl.setSpacing(10)
         fl.addWidget(caps("Current file"))
         self.files_host = QVBoxLayout(); fl.addLayout(self.files_host)
-        fl.addWidget(label("Drop a file here or use ＋ in the message box. JARVIS can summarise, convert, "
+        fl.addWidget(label("Drop a file here or use ＋ in the message box. Raya can summarise, convert, "
                            "transcribe or answer questions about it.", 11, C.TEXT_DIM, wrap=True))
         fl.addStretch()
         for w in (self.convo, self.results, self.files):

@@ -1,13 +1,13 @@
 """
-audio/output.py — speaker-side enhancement for JARVIS's voice (24 kHz mono).
+audio/output.py — speaker-side enhancement for Raya's voice (24 kHz mono).
 
-This evens out and protects what JARVIS says. It does not remove noise from
+This evens out and protects what Raya says. It does not remove noise from
 your room — that only happens on the microphone side (audio/voice.py).
 
 Chain per 10 ms block:  loudness normaliser → volume/duck ramp → look-ahead limiter
 The voice itself (Gemini's native audio) is not changed, only its level.
 
-Also: optional ducking of other apps' audio while JARVIS speaks
+Also: optional ducking of other apps' audio while Raya speaks
 (Windows via pycaw, Linux via pactl; not available on macOS).
 """
 
@@ -72,7 +72,7 @@ class OutputEnhancer:
         self._norm_gain = coef * self._norm_gain + (1 - coef) * want
         y = x * np.linspace(start, self._norm_gain, len(x), dtype=np.float32)
 
-        # 2) volume ramp (user volume; ducking of JARVIS itself is never applied)
+        # 2) volume ramp (user volume; ducking of Raya itself is never applied)
         vstart = self._vol_gain
         self._vol_gain += (self.volume - self._vol_gain) * 0.35            # ≈30 ms ramp
         y *= np.linspace(vstart, self._vol_gain, len(y), dtype=np.float32)
@@ -105,10 +105,10 @@ class OutputEnhancer:
 
 
 class Ducker:
-    """Lower other apps' audio while JARVIS speaks. Opt-in; best effort; never raises."""
+    """Lower other apps' audio while Raya speaks. Opt-in; best effort; never raises."""
 
     DUCK_TO = 0.3           # other apps go to 30 % volume
-    START_AFTER = 0.15      # s of JARVIS speech before ducking
+    START_AFTER = 0.15      # s of Raya speech before ducking
     RESTORE_AFTER = 0.8     # s of silence before restoring
 
     def __init__(self):

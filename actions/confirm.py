@@ -24,7 +24,7 @@ def request_confirmation(player, title: str, detail: str = "",
                          timeout: int = DEFAULT_TIMEOUT) -> bool:
     """Ask the user to approve an action. Blocks the calling worker thread.
 
-    `player` is the JarvisUI instance passed to every action. Returns True only
+    `player` is the RayaUI instance passed to every action. Returns True only
     when the user clicks Allow.
     """
     ask = getattr(player, "confirm_action", None)

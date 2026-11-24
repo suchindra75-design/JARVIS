@@ -5,9 +5,9 @@ Chain:  WebRTC APM (high-pass, echo cancellation, noise suppression)
         → speech-gated digital gain (our own AGC) → peak limiter → VAD / meters
 
 Why our own AGC instead of WebRTC's: measured on this Mac's speakers, WebRTC's
-AGC raises the residual echo by ~12 dB while JARVIS talks (echo reduction fell
+AGC raises the residual echo by ~12 dB while Raya talks (echo reduction fell
 from 17 dB to ~5 dB). Ours only adapts while the user is speaking and holds
-still while JARVIS is speaking.
+still while Raya is speaking.
 
 Noise suppression levels (WebRTC's suppressor is on/off only):
     off       no suppression (echo cancellation can still run)

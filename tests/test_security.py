@@ -70,7 +70,7 @@ class DashboardTests(unittest.TestCase):
         import dashboard.server as S
         tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, tmp, True)
-        S.CERT_DIR, S.KEY_FILE, S.CERT_FILE = tmp, tmp / "jarvis.key", tmp / "jarvis.crt"
+        S.CERT_DIR, S.KEY_FILE, S.CERT_FILE = tmp, tmp / "raya.key", tmp / "raya.crt"
         S.PORT = self.PORT
         S._ensure_network_access = lambda port: None
 

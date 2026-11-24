@@ -65,7 +65,7 @@ class TurnPairingTests(unittest.TestCase):
     def _run(self, items, manual=True):
         import asyncio
         import types as pytypes
-        from main import JarvisLive
+        from main import RayaLive
 
         sent = []
 
@@ -79,8 +79,8 @@ class TurnPairingTests(unittest.TestCase):
                 q.put_nowait(it)
             fake = pytypes.SimpleNamespace(out_queue=q, session=Session(), _gate_manual=manual,
                                            _awaiting_reply=False)
-            fake._send_keepalive = lambda sess: JarvisLive._send_keepalive(fake, sess)
-            task = asyncio.create_task(JarvisLive._send_realtime(fake))
+            fake._send_keepalive = lambda sess: RayaLive._send_keepalive(fake, sess)
+            task = asyncio.create_task(RayaLive._send_realtime(fake))
             while not q.empty():
                 await asyncio.sleep(0.01)
             await asyncio.sleep(0.02)
@@ -130,7 +130,7 @@ class TurnPairingTests(unittest.TestCase):
     def _run_idle(self, items):
         import asyncio
         import types as pytypes
-        from main import JarvisLive
+        from main import RayaLive
         sent = []
 
         class Session:
@@ -143,8 +143,8 @@ class TurnPairingTests(unittest.TestCase):
                 q.put_nowait(it)
             fake = pytypes.SimpleNamespace(out_queue=q, session=Session(), _gate_manual=True,
                                            _awaiting_reply=False)
-            fake._send_keepalive = lambda sess: JarvisLive._send_keepalive(fake, sess)
-            task = asyncio.create_task(JarvisLive._send_realtime(fake))
+            fake._send_keepalive = lambda sess: RayaLive._send_keepalive(fake, sess)
+            task = asyncio.create_task(RayaLive._send_realtime(fake))
             await asyncio.sleep(0.2)
             task.cancel()
             return fake
@@ -193,7 +193,7 @@ class EarlyOpenTests(unittest.TestCase):
     def test_mic_closing_mid_check_cancels_the_open_turn(self):
         h = Harness(FakeID("you", delay=0.5), open_early=lambda: True)
         h.run([(0.3, True)], settle=False)
-        h.run([(0.2, True)], allowed=False, settle=False)   # muted / JARVIS starts talking
+        h.run([(0.2, True)], allowed=False, settle=False)   # muted / Raya starts talking
         self.assertEqual(h.kinds, ["start", "cancel"])
 
     def test_short_noise_blip_is_cancelled(self):
@@ -317,10 +317,10 @@ class VoiceGateTests(unittest.TestCase):
         h = Harness(Boom(), policy="prefer").run([(2.0, True), (1.0, False)])
         self.assertEqual(h.kinds, ["start", "end"])
 
-    def test_jarvis_speaking_ends_turn_and_blocks(self):
+    def test_raya_speaking_ends_turn_and_blocks(self):
         h = Harness(FakeID("you")).run([(2.0, True)])
         self.assertEqual(h.kinds, ["start"])
-        h.run([(1.0, True)], allowed=False)             # JARVIS starts talking / mic muted
+        h.run([(1.0, True)], allowed=False)             # Raya starts talking / mic muted
         self.assertEqual(h.kinds, ["start", "end"])
         n = len(h.log)
         h.run([(2.0, True)], allowed=False)             # its own voice is never forwarded

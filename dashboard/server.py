@@ -1,5 +1,5 @@
 """
-dashboard/server.py — JARVIS phone remote-control dashboard
+dashboard/server.py — Raya phone remote-control dashboard
 
 HTTPS on ports 8000 (QR link) and 8001 (typed-in address), LAN only.
 
@@ -55,8 +55,8 @@ PORT        = 8000
 MAX_UPLOAD_MB = 500
 
 CERT_DIR    = BASE_DIR / "config" / "certs"
-KEY_FILE    = CERT_DIR / "jarvis.key"
-CERT_FILE   = CERT_DIR / "jarvis.crt"
+KEY_FILE    = CERT_DIR / "raya.key"
+CERT_FILE   = CERT_DIR / "raya.crt"
 # SHA-256 of the certificate that shipped with the public download. Its private
 # key is public, so it is always replaced by one generated on this computer.
 _SHIPPED_CERT_SHA256 = bytes.fromhex(
@@ -74,8 +74,8 @@ MAX_FAILS_TOTAL  = 30               # then every outstanding pairing key is canc
 def _make_uploads_dir() -> Path:
     """Return (and create) the cross-platform uploads folder."""
     for candidate in [
-        Path.home() / "Downloads" / "JARVIS Uploads",
-        Path.home() / "Documents" / "JARVIS Uploads",
+        Path.home() / "Downloads" / "Raya Uploads",
+        Path.home() / "Documents" / "Raya Uploads",
         BASE_DIR / "uploads",
     ]:
         try:
@@ -100,7 +100,7 @@ _KEY_CHARS = [c for c in (string.ascii_uppercase + string.digits)
               if c not in ('O', 'I', 'L', '0', '1')]
 
 # ── AES-256-CBC ───────────────────────────────────────────────────────────────
-_AES_SALT = b'JARVIS-DASHBOARD-v1'
+_AES_SALT = b'RAYA-DASHBOARD-v1'
 
 
 def _derive_key(session_key: str) -> bytes:
@@ -142,8 +142,8 @@ def _ensure_network_access(port: int) -> None:
     if sys.platform == "win32":
         import ctypes, time
 
-        port_rule = f"JARVIS Dashboard Port {port}"
-        prog_rule  = "JARVIS Dashboard Python"
+        port_rule = f"Raya Dashboard Port {port}"
+        prog_rule  = "Raya Dashboard Python"
         py_exe     = sys.executable
 
         def _netsh_rule_exists(name: str) -> bool:
@@ -169,8 +169,12 @@ def _ensure_network_access(port: int) -> None:
             except Exception:
                 return False
 
-        need_port    = not _netsh_rule_exists(port_rule)
-        need_prog    = not _netsh_rule_exists(prog_rule)
+        # Rules added before the rename to Raya still count: re-adding them
+        # under the new name would need another administrator prompt.
+        need_port    = not (_netsh_rule_exists(port_rule)
+                            or _netsh_rule_exists(f"JARVIS Dashboard Port {port}"))
+        need_prog    = not (_netsh_rule_exists(prog_rule)
+                            or _netsh_rule_exists("JARVIS Dashboard Python"))
 
         # Networks marked "Public" are left alone on purpose: silently switching
         # them to "Private" would relax Windows' protections on café/hotel Wi-Fi.
@@ -197,7 +201,7 @@ def _ensure_network_access(port: int) -> None:
             )
 
         bat_body = "\r\n".join(bat_lines) + "\r\n"
-        fd, bat_path = tempfile.mkstemp(suffix=".bat", prefix="jarvis_fw_")
+        fd, bat_path = tempfile.mkstemp(suffix=".bat", prefix="raya_fw_")
         try:
             os.write(fd, bat_body.encode("mbcs"))   # Windows cmd.exe expects ANSI
             os.close(fd)
@@ -245,7 +249,7 @@ def _ensure_network_access(port: int) -> None:
                 print("[Dashboard] Refresh your phone browser to connect.")
             else:
                 print("[Dashboard] Setup was not allowed.")
-                print("[Dashboard] Phone connections may fail until JARVIS is run as Administrator.")
+                print("[Dashboard] Phone connections may fail until Raya is run as Administrator.")
         except Exception as e:
             print(f"[Dashboard] Firewall setup error: {e}")
         finally:
@@ -408,8 +412,8 @@ def _ensure_cert(ip: str) -> bool:
         print(f"[Dashboard] Creating a new HTTPS certificate ({reason}).")
         key  = ec.generate_private_key(ec.SECP256R1())
         name = x509.Name([
-            x509.NameAttribute(NameOID.ORGANIZATION_NAME, "JARVIS (this computer)"),
-            x509.NameAttribute(NameOID.COMMON_NAME, f"jarvis-{socket.gethostname()}"[:64]),
+            x509.NameAttribute(NameOID.ORGANIZATION_NAME, "Raya (this computer)"),
+            x509.NameAttribute(NameOID.COMMON_NAME, f"raya-{socket.gethostname()}"[:64]),
         ])
         alt = [x509.DNSName("localhost"), x509.IPAddress(ipaddress.ip_address("127.0.0.1"))]
         if ip and ip != "127.0.0.1":
@@ -724,7 +728,7 @@ class DashboardServer:
   h2{color:#f87171;margin-bottom:12px}p{color:#5e6a7e;font-size:14px}
 </style></head>
 <body><div><h2>Link Expired</h2>
-<p>Press <strong style="color:#dde3ed">Remote Control</strong> in JARVIS to get a new QR code.</p>
+<p>Press <strong style="color:#dde3ed">Remote Control</strong> in Raya to get a new QR code.</p>
 </div></body></html>""")
 
             del self._pending_keys[key]
@@ -750,12 +754,12 @@ class DashboardServer:
 </style></head>
 <body>
 <script>
-  sessionStorage.setItem('jarvis_token','{tok}');
-  sessionStorage.setItem('jarvis_key','{key}');
-  localStorage.setItem('jarvis_device_token','{dev_tok}');
+  sessionStorage.setItem('raya_token','{tok}');
+  sessionStorage.setItem('raya_key','{key}');
+  localStorage.setItem('raya_device_token','{dev_tok}');
   setTimeout(function(){{location.replace('/')}},400);
 </script>
-<p>Connecting to JARVIS…</p>
+<p>Connecting to Raya…</p>
 </body></html>""")
 
         @app.post("/api/device-login")
@@ -1025,7 +1029,7 @@ class DashboardServer:
         try:
             await server.serve()
         except (SystemExit, Exception) as e:
-            # uvicorn calls sys.exit() on startup errors; never let that end JARVIS.
+            # uvicorn calls sys.exit() on startup errors; never let that end Raya.
             print(f"[Dashboard] Server stopped with an error: {e!r}")
         finally:
             if server in self._servers:

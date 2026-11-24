@@ -69,8 +69,8 @@ def is_configured() -> bool:
 
 
 def get_assistant_name() -> str:
-    """Return the configured assistant name, or 'JARVIS' if not set."""
-    return load_api_keys().get("assistant_name", "JARVIS") or "JARVIS"
+    """Return the configured assistant name, or 'Raya' if not set."""
+    return load_api_keys().get("assistant_name", "Raya") or "Raya"
 
 
 def get_user_name() -> str:
@@ -81,7 +81,7 @@ def get_user_name() -> str:
 def save_assistant_config(assistant_name: str, user_name: str) -> None:
     """Persist assistant name and user name to config."""
     update_config({
-        "assistant_name": assistant_name.strip() or "JARVIS",
+        "assistant_name": assistant_name.strip() or "Raya",
         "user_name": user_name.strip(),
     })
 

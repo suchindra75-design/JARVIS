@@ -23,5 +23,5 @@ if platform.system() == "Windows":
             f'    "{sys.executable}" "{postinstall}" -install\n'
         )
 
-print("\n✅ Setup complete! Run 'python main.py' to start MARK XXV.")
+print("\n✅ Setup complete! Run 'python main.py' to start Raya.")
 

@@ -34,7 +34,7 @@ if TYPE_CHECKING:
 
 from google import genai
 from google.genai import types
-from ui import JarvisUI
+from ui import RayaUI
 from memory.memory_manager import (
     load_memory, update_memory, format_memory_for_prompt,
 )
@@ -143,7 +143,7 @@ def _load_system_prompt() -> str:
         return PROMPT_PATH.read_text(encoding="utf-8")
     except Exception:
         return (
-            "You are JARVIS, Tony Stark's AI assistant. "
+            "You are Raya, a personal AI assistant. "
             "Be concise, direct, and always use the provided tools to complete tasks. "
             "Never simulate or guess results — always call the appropriate tool."
         )
@@ -480,11 +480,11 @@ TOOL_DECLARATIONS = [
         }
     },
     {
-        "name": "shutdown_jarvis",
+        "name": "shutdown_raya",
         "description": (
             "Shuts down the assistant completely. "
             "Call this when the user expresses intent to end the conversation, "
-            "close the assistant, say goodbye, or stop Jarvis. "
+            "close the assistant, say goodbye, or stop Raya. "
             "The user can say this in ANY language."
         ),
         "parameters": {
@@ -611,11 +611,11 @@ class _GateReconnect(Exception):
     """Raised inside the session to reconnect with a different voice-gate mode."""
 
 
-class JarvisLive:
+class RayaLive:
 
-    def __init__(self, ui: JarvisUI):
+    def __init__(self, ui: RayaUI):
         self.ui             = ui
-        self._asst_name     = "JARVIS"   # updated each session from config
+        self._asst_name     = "Raya"   # updated each session from config
         self.session: "AsyncSession | None" = None
         self.audio: "AudioEngine | None" = None     # created in run()
         self.speaker_id = None                       # SpeakerIdentity, created in run()
@@ -693,11 +693,11 @@ class JarvisLive:
             self.ui.set_state("LISTENING")
 
     def interrupt(self) -> None:
-        """Stop JARVIS mid-speech: flush the speaker within ~10 ms and open the mic."""
+        """Stop Raya mid-speech: flush the speaker within ~10 ms and open the mic."""
         self._interrupted = True
         if self.audio:
             self.audio.flush()
-            print("[JARVIS] ✋ Interrupted — playback flushed")
+            print("[Raya] ✋ Interrupted — playback flushed")
         self.set_speaking(False)
         if self._turn_done_event:
             self._turn_done_event.clear()
@@ -725,10 +725,10 @@ class JarvisLive:
         # Load customization from config
         try:
             _cfg = json.loads(open(API_CONFIG_PATH, encoding="utf-8").read())
-            self._asst_name = (_cfg.get("assistant_name") or "JARVIS").strip()
+            self._asst_name = (_cfg.get("assistant_name") or "Raya").strip()
             _user_name = (_cfg.get("user_name") or "").strip()
         except Exception:
-            self._asst_name = "JARVIS"
+            self._asst_name = "Raya"
             _user_name = ""
 
         memory     = load_memory()
@@ -796,7 +796,7 @@ class JarvisLive:
         name = fc.name
         args = dict(fc.args or {})
 
-        print(f"[JARVIS] 🔧 {name}  {args}")
+        print(f"[Raya] 🔧 {name}  {args}")
         self.ui.set_state("THINKING")
         call_id = str(getattr(fc, "id", "") or f"{name}-{time.monotonic_ns()}")
         if hasattr(self.ui, "tool_event"):
@@ -831,7 +831,7 @@ class JarvisLive:
                 None, lambda: request_confirmation(self.ui, title, detail)
             )
             if not approved:
-                print(f"[JARVIS] 🚫 {name} declined by user")
+                print(f"[Raya] 🚫 {name} declined by user")
                 if hasattr(self.ui, "tool_event"):
                     self.ui.tool_event(call_id, name, "declined")
                 if not self.ui.muted:
@@ -954,7 +954,7 @@ class JarvisLive:
                 r = await loop.run_in_executor(None, get_system_status)
                 result = str(r)
 
-            elif name == "shutdown_jarvis":
+            elif name == "shutdown_raya":
                 self.ui.write_log("SYS: Shutdown requested.")
                 self.speak("Goodbye, sir.")
                 def _shutdown():
@@ -979,7 +979,7 @@ class JarvisLive:
         if not self.ui.muted:
             self.ui.set_state("LISTENING")
 
-        print(f"[JARVIS] 📤 {name} → {result[:80]}")
+        print(f"[Raya] 📤 {name} → {result[:80]}")
         return types.FunctionResponse(
             id=fc.id, name=name,
             response={"result": result}
@@ -1033,7 +1033,7 @@ class JarvisLive:
             await session.send_realtime_input(
                 audio=types.Blob(data=bytes(640), mime_type="audio/pcm;rate=16000"))
         except Exception as e:
-            print(f"[JARVIS] keep-alive failed: {e}")
+            print(f"[Raya] keep-alive failed: {e}")
 
     # ── audio engine glue ───────────────────────────────────────────────────
     # The AudioEngine (audio/engine.py) owns the mic, speaker and all
@@ -1175,12 +1175,12 @@ class JarvisLive:
 
     async def _listen_audio(self):
         """Keeps the session's task layout; capture itself runs in the AudioEngine."""
-        print("[JARVIS] 🎤 Mic via AudioEngine")
+        print("[Raya] 🎤 Mic via AudioEngine")
         while True:
             await asyncio.sleep(3600)
 
     async def _receive_audio(self):
-        print("[JARVIS] 👂 Recv started")
+        print("[Raya] 👂 Recv started")
         out_buf, in_buf = [], []
 
         try:
@@ -1196,7 +1196,7 @@ class JarvisLive:
                     in_buf.clear()
                     if not full:
                         return
-                    print(f"[JARVIS] Heard: {full[:120]}")
+                    print(f"[Raya] Heard: {full[:120]}")
                     if hasattr(self.ui, "add_message"):
                         self.ui.add_message("user", full, "voice")
                     else:
@@ -1270,7 +1270,7 @@ class JarvisLive:
                                     self.ui.write_log(f"{self._asst_name}: {full_out}")
                                 if self._dashboard:
                                     asyncio.create_task(self._dashboard.broadcast({
-                                        "type": "log", "speaker": "jarvis",
+                                        "type": "log", "speaker": "raya",
                                         "text": full_out,
                                         "ts": datetime.now().isoformat(),
                                     }))
@@ -1297,7 +1297,7 @@ class JarvisLive:
                                 )
                                 # Mark next turn_complete behaviour depending on angle
                                 if self._vision_cam_active:
-                                    # Camera: keep busy until JARVIS finishes speaking the answer
+                                    # Camera: keep busy until Raya finishes speaking the answer
                                     self._vision_cam_active    = False
                                     self._vision_close_pending = True
                                 else:
@@ -1315,14 +1315,14 @@ class JarvisLive:
                     if response.tool_call:
                         fn_responses = []
                         for fc in (response.tool_call.function_calls or []):
-                            print(f"[JARVIS] 📞 {fc.name}")
+                            print(f"[Raya] 📞 {fc.name}")
                             fr = await self._execute_tool(fc)
                             fn_responses.append(fr)
                         await session.send_tool_response(
                             function_responses=fn_responses
                         )
         except Exception as e:
-            print(f"[JARVIS] ❌ Recv: {e}")
+            print(f"[Raya] ❌ Recv: {e}")
             traceback.print_exc()
             raise
 
@@ -1331,7 +1331,7 @@ class JarvisLive:
 
         Playback itself happens on the engine's audio thread; this only watches it.
         """
-        print("[JARVIS] 🔊 Playback via AudioEngine")
+        print("[Raya] 🔊 Playback via AudioEngine")
         speaking = False
         try:
             while True:
@@ -1623,7 +1623,7 @@ class JarvisLive:
         self._bg_tasks: set[asyncio.Task] = set()
 
         # Audio: one engine for the whole process (survives Gemini reconnects).
-        # If it can't start, JARVIS still runs text-only rather than crashing.
+        # If it can't start, Raya still runs text-only rather than crashing.
         try:
             self.audio = AudioEngine(
                 AudioSettings.from_dict(get_audio_settings()),
@@ -1672,7 +1672,7 @@ class JarvisLive:
 
         while True:
             try:
-                print("[JARVIS] Connecting...")
+                print("[Raya] Connecting...")
                 if hasattr(self.ui, "set_connection"):
                     self.ui.set_connection("connecting")
                 self.ui.set_state("THINKING")
@@ -1702,11 +1702,11 @@ class JarvisLive:
                     self._vision_last_time     = 0.0
                     self._interrupted          = False
 
-                    print("[JARVIS] Connected.")
+                    print("[Raya] Connected.")
                     if hasattr(self.ui, "set_connection"):
                         self.ui.set_connection("connected")
                     self.ui.set_state("LISTENING")
-                    self.ui.write_log("SYS: JARVIS online.")
+                    self.ui.write_log("SYS: Raya online.")
 
                     if self._dashboard:
                         await self._dashboard.broadcast({"type": "status", "state": "active"})
@@ -1740,7 +1740,7 @@ class JarvisLive:
                 if self._quick_reconnect:
                     err_str = ""                          # planned: voice-gate mode change
                 else:
-                    print(f"[JARVIS] Error ({type(e).__name__}): {e}")
+                    print(f"[Raya] Error ({type(e).__name__}): {e}")
                     traceback.print_exc()
 
                 # Invalid API key — stop hammering the API, prompt re-configuration
@@ -1752,7 +1752,7 @@ class JarvisLive:
                     self.ui.prompt_reconfig()
                     while not self.ui._win._ready:
                         await asyncio.sleep(1)
-                    print("[JARVIS] New API key saved — reconnecting...")
+                    print("[Raya] New API key saved — reconnecting...")
                     _conn_backoff = 3
                     continue
 
@@ -1786,12 +1786,12 @@ class JarvisLive:
             if self._quick_reconnect:
                 self._quick_reconnect = False
                 delay = 0.3
-            print(f"[JARVIS] Reconnecting in {delay}s...")
+            print(f"[Raya] Reconnecting in {delay}s...")
             await asyncio.sleep(delay)
 
 def _single_instance_lock():
-    """Only one JARVIS at a time: two would share the mic and both answer."""
-    path = BASE_DIR / "config" / ".jarvis.lock"
+    """Only one Raya at a time: two would share the mic and both answer."""
+    path = BASE_DIR / "config" / ".raya.lock"
     path.parent.mkdir(parents=True, exist_ok=True)
     f = open(path, "a+")
     try:
@@ -1809,17 +1809,23 @@ def _single_instance_lock():
 def main():
     lock = _single_instance_lock()
     if lock is None:
-        print("[JARVIS] Already running — not starting a second copy.")
+        print("[Raya] Already running — not starting a second copy.")
         return
-    ui = JarvisUI("face.png")
+
+    # Things the app made under its old name (JARVIS) move to Raya's names.
+    from core.rename_migration import migrate_legacy_names
+    migrate_legacy_names()
+
+    ui = RayaUI("face.png")
+    ui.migrate_legacy_shortcut()
     live: dict = {}
 
     def runner():
         ui.wait_for_api_key()
-        jarvis = JarvisLive(ui)
-        live["jarvis"] = jarvis
+        raya = RayaLive(ui)
+        live["raya"] = raya
         try:
-            asyncio.run(jarvis.run())
+            asyncio.run(raya.run())
         except KeyboardInterrupt:
             print("\n🔴 Shutting down...")
 
@@ -1828,12 +1834,12 @@ def main():
 
     # Window closed: stop the audio thread before Python tears down its
     # libraries, and give other apps their volume back if they were ducked.
-    audio = getattr(live.get("jarvis"), "audio", None)
+    audio = getattr(live.get("raya"), "audio", None)
     if audio is not None:
         try:
             audio.stop()
         except Exception as e:
-            print(f"[JARVIS] Audio shutdown: {e}")
+            print(f"[Raya] Audio shutdown: {e}")
 
 if __name__ == "__main__":
     main()

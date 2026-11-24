@@ -101,7 +101,7 @@ class VoiceProcessorTests(unittest.TestCase):
             k = int(np.argmax(np.abs(xc)))
             self.assertGreater(xc[k], 0, f"{lvl}: output phase-inverted (lag {k})")
 
-    def test_agc_holds_still_while_jarvis_speaks(self):
+    def test_agc_holds_still_while_raya_speaks(self):
         agc = SpeechGatedAGC(-23)
         x = tone(300, 0.01, 16000, 0.01)
         for _ in range(100):
@@ -186,7 +186,7 @@ class EngineTests(_EngineBase):
         before = len(chunks)
         self.feed_mic(eng, 0.3)
         time.sleep(0.1)
-        self.assertEqual(len(chunks), before, "mic must be closed while JARVIS plays")
+        self.assertEqual(len(chunks), before, "mic must be closed while Raya plays")
         self.pull_speaker(eng, 60)                  # drain everything
         # a real output device keeps pulling; keep the fake one running too
         self.assertTrue(self.wait(lambda: (self.pull_speaker(eng, 1) is not None) and not eng.is_playing))
@@ -307,7 +307,7 @@ class SettingsTests(unittest.TestCase):
         import memory.config_manager as cm
         with tempfile.TemporaryDirectory() as td:
             f = Path(td) / "api_keys.json"
-            f.write_text(json.dumps({"gemini_api_key": "KEEP", "assistant_name": "JARVIS"}))
+            f.write_text(json.dumps({"gemini_api_key": "KEEP", "assistant_name": "Raya"}))
             with mock.patch.object(cm, "CONFIG_FILE", f), mock.patch.object(cm, "CONFIG_DIR", Path(td)):
                 cm.save_audio_settings({"full_duplex": True})
                 d = json.loads(f.read_text())
