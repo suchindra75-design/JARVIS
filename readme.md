@@ -80,7 +80,7 @@ Raya started from Mark XLIX; this is the original project's roadmap.
 ## ⚡ Quick Start
 
 ```bash
-git clone https://github.com/suchindra75-design/JARVIS.git Raya
+git clone https://github.com/suchindra75-design/RAYA.git Raya
 cd Raya
 pip install -r requirements.txt
 python main.py
